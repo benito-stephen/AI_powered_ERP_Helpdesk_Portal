@@ -927,7 +927,7 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                                     <?php endif; ?>
                                 </td>
                                 <td>
-                                    <a href="<?php echo htmlspecialchars($doc['file_path']); ?>" target="_blank" style="color: #5f2397; font-weight: bold; text-decoration: none;">View PDF</a>
+                                    <a href="view_document.php?kb_id=<?php echo $doc['id']; ?>" target="_blank" style="color: #5f2397; font-weight: bold; text-decoration: none;">View PDF</a>
                                 </td>
                                 <td>
                                     <div style="display:flex; gap:5px; flex-direction:column;">

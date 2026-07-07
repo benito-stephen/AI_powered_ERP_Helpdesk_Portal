@@ -993,7 +993,7 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                                 </td>
                                 <td><?php echo htmlspecialchars($doc['uploaded_by']); ?></td>
                                 <td>
-                                    <a href="<?php echo htmlspecialchars($doc['file_path']); ?>" target="_blank" style="color: #5f2397; font-weight: bold; text-decoration: none;">Open PDF</a>
+                                    <a href="view_document.php?kb_id=<?php echo $doc['id']; ?>" target="_blank" style="color: #5f2397; font-weight: bold; text-decoration: none;">Open PDF</a>
                                 </td>
                                 <td>
                                     <button class="btn-approve" onclick='openEditModal(<?php echo json_encode($doc); ?>)'>Edit</button>

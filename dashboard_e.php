@@ -715,16 +715,23 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
             <div id="policies" class="section">
                 <h3>Company Policies & Guidelines</h3>
                 <div class="overview-cards">
-                    <div class="info-card">
-                        <h4>Leave Policy</h4>
-                        <p style="font-size: 14px; font-weight: normal; color: #666; margin-top: 10px;">Guidelines for applying, approving, and balance of employee leaves.</p>
-                        <a href="policies/leave_policy_2026.pdf" target="_blank" style="display:inline-block; margin-top: 15px; color:#5f2397; font-weight:bold; text-decoration:none;">Open PDF Document</a>
-                    </div>
-                    <div class="info-card">
-                        <h4>Attendance Policy</h4>
-                        <p style="font-size: 14px; font-weight: normal; color: #666; margin-top: 10px;">Punch-in guidelines, weekly working hours requirements, and weekend closing rules.</p>
-                        <a href="policies/attendance_rules.pdf" target="_blank" style="display:inline-block; margin-top: 15px; color:#5f2397; font-weight:bold; text-decoration:none;">Open PDF Document</a>
-                    </div>
+                    <?php 
+                    $active_docs = mysqli_query($conn, "SELECT * FROM knowledge_base WHERE status = 'Accepted' ORDER BY id DESC");
+                    if (mysqli_num_rows($active_docs) == 0): ?>
+                        <div style="grid-column: 1 / -1; text-align: center; color: #777; padding: 20px;">
+                            No policy documents have been published yet.
+                        </div>
+                    <?php else: ?>
+                        <?php while ($doc = mysqli_fetch_assoc($active_docs)): ?>
+                            <div class="info-card">
+                                <h4><?php echo htmlspecialchars($doc['title']); ?></h4>
+                                <p style="font-size: 14px; font-weight: normal; color: #666; margin-top: 10px;">
+                                    File: <code><?php echo htmlspecialchars($doc['file_path']); ?></code>
+                                </p>
+                                <a href="view_document.php?kb_id=<?php echo $doc['id']; ?>" target="_blank" style="display:inline-block; margin-top: 15px; color:#5f2397; font-weight:bold; text-decoration:none;">Open PDF Document</a>
+                            </div>
+                        <?php endwhile; ?>
+                    <?php endif; ?>
                 </div>
             </div>
 
