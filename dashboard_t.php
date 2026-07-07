@@ -103,7 +103,33 @@ if (isset($_POST['apply_leave'])) {
 if (isset($_POST['accept_doc'])) {
     $doc_id = intval($_POST['doc_id']);
     mysqli_query($conn, "UPDATE knowledge_base SET status = 'Accepted', accepted_by = '$userid' WHERE id = $doc_id");
-    $message = "Document ID $doc_id accepted and published to the AI model knowledge base.";
+    
+    // Fetch RAG document ID to trigger processing
+    $res = mysqli_query($conn, "SELECT rag_document_id, title FROM knowledge_base WHERE id = $doc_id LIMIT 1");
+    $kb_doc = mysqli_fetch_assoc($res);
+    $rag_doc_id = $kb_doc['rag_document_id'] ?? '';
+    
+    $fastapi_msg = "";
+    if (!empty($rag_doc_id)) {
+        $fastapi_url = "http://127.0.0.1:8000/process/" . urlencode($rag_doc_id);
+        $ch = curl_init($fastapi_url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST           => true,
+            CURLOPT_TIMEOUT        => 10,
+        ]);
+        $response = curl_exec($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        
+        if ($http_code === 200 || $http_code === 202) {
+            $fastapi_msg = " RAG indexing pipeline started in background.";
+        } else {
+            $fastapi_msg = " (Warning: Failed to contact RAG service to start indexing).";
+        }
+    }
+    
+    $message = "Document '{$kb_doc['title']}' (ID $doc_id) accepted and published." . $fastapi_msg;
 }
 
 // 7. Handle POST Request: Reject & Revert Knowledge Base Document status to Draft
@@ -111,6 +137,35 @@ if (isset($_POST['reject_doc'])) {
     $doc_id = intval($_POST['doc_id']);
     mysqli_query($conn, "UPDATE knowledge_base SET status = 'Draft' WHERE id = $doc_id");
     $message = "Document ID $doc_id status reverted to Draft.";
+}
+
+// 7b. Handle POST Request: Delete Knowledge Base Document and Clean up RAG
+if (isset($_POST['delete_doc'])) {
+    $doc_id = intval($_POST['doc_id']);
+    
+    // Fetch RAG document ID first
+    $res = mysqli_query($conn, "SELECT rag_document_id, title FROM knowledge_base WHERE id = $doc_id LIMIT 1");
+    if ($res && mysqli_num_rows($res) > 0) {
+        $kb_doc = mysqli_fetch_assoc($res);
+        $rag_doc_id = $kb_doc['rag_document_id'] ?? '';
+        
+        // Trigger deletion on FastAPI if it exists
+        if (!empty($rag_doc_id)) {
+            $fastapi_url = "http://127.0.0.1:8000/delete/" . urlencode($rag_doc_id);
+            $ch = curl_init($fastapi_url);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_POST           => true,
+                CURLOPT_TIMEOUT        => 10,
+            ]);
+            curl_exec($ch);
+            curl_close($ch);
+        }
+        
+        // Delete from main database
+        mysqli_query($conn, "DELETE FROM knowledge_base WHERE id = $doc_id");
+        $message = "Document '{$kb_doc['title']}' permanently deleted from system.";
+    }
 }
 
 // 8. Handle POST Request: Edit Document parameters
@@ -865,6 +920,11 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                                     <span class="status-badge <?php echo strtolower($doc['status']); ?>">
                                         <?php echo htmlspecialchars($doc['status']); ?>
                                     </span>
+                                    <?php if (!empty($doc['rag_document_id'])): ?>
+                                        <div class="rag-status" data-rag-id="<?php echo htmlspecialchars($doc['rag_document_id']); ?>" style="font-size:11px; color:#555; margin-top:5px; font-style:italic;">
+                                            RAG: checking...
+                                        </div>
+                                    <?php endif; ?>
                                 </td>
                                 <td>
                                     <a href="<?php echo htmlspecialchars($doc['file_path']); ?>" target="_blank" style="color: #5f2397; font-weight: bold; text-decoration: none;">View PDF</a>
@@ -894,6 +954,10 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                                             </form>
                                         <?php endif; ?>
                                         <button class="btn-primary" style="padding:2px 5px; font-size:11px; width:100%;" onclick='openEditModal(<?php echo json_encode($doc); ?>)'>Edit</button>
+                                        <form method="POST" style="display:inline;" onsubmit="return confirm('Are you sure you want to permanently delete this document and all its chunks/embeddings?');">
+                                            <input type="hidden" name="doc_id" value="<?php echo $doc['id']; ?>">
+                                            <button type="submit" name="delete_doc" style="width:100%; padding:2px 5px; font-size:11px; background:#e74c3c; color:white; border:none; border-radius:4px; cursor:pointer;">Delete</button>
+                                        </form>
                                     </div>
                                 </td>
                             </tr>
@@ -1244,6 +1308,44 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                 isSending = false;
             });
         }
+
+        // RAG Status Polling
+        document.addEventListener('DOMContentLoaded', () => {
+            const ragElements = document.querySelectorAll('.rag-status');
+            
+            function pollStatus(element) {
+                const docId = element.getAttribute('data-rag-id');
+                if (!docId) return;
+                
+                fetch(`rag_status.php?doc_id=${docId}`)
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.status) {
+                            let label = data.status_label || data.status;
+                            if (data.status === 'ready') {
+                                label = `Ready (${data.chunk_count} chunks)`;
+                                element.style.color = '#2ecc71';
+                                element.style.fontWeight = 'bold';
+                            } else if (data.status === 'error') {
+                                label = `Error: ${data.error_message || 'Pipeline failed'}`;
+                                element.style.color = '#e74c3c';
+                                element.style.fontWeight = 'bold';
+                            } else {
+                                element.style.color = '#e67e22';
+                                // Keep polling if not finished or in error
+                                setTimeout(() => pollStatus(element), 5000);
+                            }
+                            element.textContent = `RAG: ${label}`;
+                        }
+                    })
+                    .catch(err => {
+                        console.error('RAG poll error:', err);
+                        element.textContent = 'RAG: offline';
+                    });
+            }
+            
+            ragElements.forEach(pollStatus);
+        });
     </script>
 
 </body>

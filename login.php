@@ -234,7 +234,13 @@ else if (isset($_COOKIE['remember_user'])) {
                 <button type="submit">Login</button>
             </form>
             <!-- Error or feedback text output placeholder -->
-            <p id="message"></p>
+            <?php if (!empty($_GET['error'])): ?>
+                <p id="message" style="color: #e74c3c;">
+                    <?php echo htmlspecialchars($_GET['error']); ?>
+                </p>
+            <?php else: ?>
+                <p id="message"></p>
+            <?php endif; ?>
         </div>
     </div>
 

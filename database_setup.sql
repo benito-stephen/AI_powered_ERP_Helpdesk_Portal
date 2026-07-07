@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS `knowledge_base` (
   `status` VARCHAR(50) DEFAULT 'Draft', -- Publication state: 'Draft', 'Submitted', 'Accepted'
   `uploaded_by` VARCHAR(50) NOT NULL,
   `accepted_by` VARCHAR(50) DEFAULT NULL,
+  `rag_document_id` VARCHAR(36) DEFAULT NULL, -- UUID of document in RAG DB
   `last_updated` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (`uploaded_by`) REFERENCES `users` (`userid`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

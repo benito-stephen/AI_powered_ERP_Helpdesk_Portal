@@ -40,6 +40,10 @@ $user_query = mysqli_query($conn, "SELECT * FROM users WHERE userid = '$userid'"
 $user = mysqli_fetch_assoc($user_query);
 
 $message = "";
+if (isset($_SESSION['upload_message'])) {
+    $message = $_SESSION['upload_message'];
+    unset($_SESSION['upload_message']);
+}
 
 // 2. Handle POST Request: Profile Updates
 if (isset($_POST['update_profile'])) {
@@ -947,13 +951,13 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                 <h3>Knowledge Base Management</h3>
                 <p>Submit and Edit documents and policies for AI assistant integration. Technical Admin approval is required to activate documents.</p>
                 
-                <form method="POST" style="background: #fdfcff; padding: 20px; border: 1px solid #e9ecef; border-radius: 8px; margin-bottom: 30px;">
+                <form action="upload.php" method="POST" enctype="multipart/form-data" style="background: #fdfcff; padding: 20px; border: 1px solid #e9ecef; border-radius: 8px; margin-bottom: 30px;">
                     <h4 style="margin-top:0;">Submit Policy Document</h4>
                     <label>Document Title</label>
                     <input type="text" name="doc_title" placeholder="e.g. Leave Policy 2026" required>
                     
-                    <label>File Path / Link</label>
-                    <input type="text" name="doc_file_path" placeholder="e.g. policies/leave_policy_2026.pdf" required>
+                    <label>Select Document File (.pdf, .docx, .txt)</label>
+                    <input type="file" name="document" accept=".pdf,.docx,.txt" required>
                     
                     <button type="submit" name="submit_document" class="btn-primary">Submit Document</button>
                 </form>
@@ -981,6 +985,11 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                                     <span class="status-badge <?php echo strtolower($doc['status']); ?>">
                                         <?php echo htmlspecialchars($doc['status']); ?>
                                     </span>
+                                    <?php if (!empty($doc['rag_document_id'])): ?>
+                                        <div class="rag-status" data-rag-id="<?php echo htmlspecialchars($doc['rag_document_id']); ?>" style="font-size:11px; color:#555; margin-top:5px; font-style:italic;">
+                                            RAG: checking...
+                                        </div>
+                                    <?php endif; ?>
                                 </td>
                                 <td><?php echo htmlspecialchars($doc['uploaded_by']); ?></td>
                                 <td>
@@ -1201,12 +1210,12 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
     <div class="modal" id="editModal">
         <div class="modal-content">
             <h3 style="margin-top:0;">Edit Document</h3>
-            <form method="POST">
+            <form action="upload.php" method="POST" enctype="multipart/form-data">
                 <input type="hidden" id="edit_doc_id" name="doc_id">
                 <label>Document Title</label>
-                <input type="text" id="edit_doc_title" name="new_title" required>
-                <label>File Path</label>
-                <input type="text" id="edit_doc_file_path" name="new_file_path" required>
+                <input type="text" id="edit_doc_title" name="doc_title" required>
+                <label>Upload Replacement Document File (.pdf, .docx, .txt)</label>
+                <input type="file" name="document" accept=".pdf,.docx,.txt" required>
                 <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:10px;">
                     <button type="button" onclick="closeEditModal()" style="background:#ccc; border:none; padding:8px 15px; border-radius:4px; cursor:pointer;">Cancel</button>
                     <button type="submit" name="edit_document" class="btn-primary" style="padding:8px 15px;">Save Changes</button>
@@ -1341,6 +1350,44 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                 isSending = false;
             });
         }
+
+        // RAG Status Polling
+        document.addEventListener('DOMContentLoaded', () => {
+            const ragElements = document.querySelectorAll('.rag-status');
+            
+            function pollStatus(element) {
+                const docId = element.getAttribute('data-rag-id');
+                if (!docId) return;
+                
+                fetch(`rag_status.php?doc_id=${docId}`)
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.status) {
+                            let label = data.status_label || data.status;
+                            if (data.status === 'ready') {
+                                label = `Ready (${data.chunk_count} chunks)`;
+                                element.style.color = '#2ecc71';
+                                element.style.fontWeight = 'bold';
+                            } else if (data.status === 'error') {
+                                label = `Error: ${data.error_message || 'Pipeline failed'}`;
+                                element.style.color = '#e74c3c';
+                                element.style.fontWeight = 'bold';
+                            } else {
+                                element.style.color = '#e67e22';
+                                // Keep polling if not finished or in error
+                                setTimeout(() => pollStatus(element), 5000);
+                            }
+                            element.textContent = `RAG: ${label}`;
+                        }
+                    })
+                    .catch(err => {
+                        console.error('RAG poll error:', err);
+                        element.textContent = 'RAG: offline';
+                    });
+            }
+            
+            ragElements.forEach(pollStatus);
+        });
     </script>
 
 </body>

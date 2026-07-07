@@ -122,6 +122,29 @@ $leave_query = mysqli_query($conn, "SELECT * FROM leaves WHERE userid = '$userid
 // Set work hour parameters
 $required_hours = 40.0;
 $completed_hours = round($user['weekly_hours'], 2);
+$total_days = mysqli_fetch_assoc(
+mysqli_query(
+$conn,
+"SELECT COUNT(*) as total
+FROM attendance
+WHERE userid='$userid'")
+)['total'];
+
+$present_days = mysqli_fetch_assoc(
+mysqli_query(
+$conn,
+"SELECT COUNT(*) as total
+FROM attendance
+WHERE userid='$userid'
+AND duration > 0")
+)['total'];
+
+$attendance_percentage =
+$total_days
+?
+round(($present_days/$total_days)*100,2)
+:
+0;
 $remaining_hours = max(0, $required_hours - $completed_hours);
 $overdue_hours = ($completed_hours > $required_hours) ? round($completed_hours - $required_hours, 2) : 0.0;
 

@@ -1,76 +1,88 @@
 <?php
 /**
- * Authentication Handler File
- * 
- * Processes POST requests containing login credentials, verifies them against 
- * the database, logs user sessions, sets up session variables, configures 
- * autologin cookies, and redirects the user to their designated dashboard.
+ * authenticate.php
+ * Handles login form submission and starts user session.
+ * Passwords are stored and compared as plain text (prototype mode).
  */
 
-// Start a session to initialize/store logged-in user data
 session_start();
-
-// Include database connection settings
 include("db.php");
 
-// Retrieve POST login inputs
-$userid = $_POST['userid'];
-$password = $_POST['password'];
+// Only accept POST requests
+if ($_SERVER["REQUEST_METHOD"] != "POST") {
+    header("Location: login.php");
+    exit();
+}
 
-// Define query to look up users matching the provided User ID and Password
-$sql = "SELECT * FROM users
-        WHERE userid='$userid'
-        AND password='$password'";
+// Read and trim inputs
+$userid   = trim($_POST['userid']   ?? '');
+$password = trim($_POST['password'] ?? '');
 
-$result = mysqli_query($conn,$sql);
+// Validate: neither field can be empty
+if (empty($userid) || empty($password)) {
+    header("Location: login.php?error=" . urlencode("Please enter your User ID and Password."));
+    exit();
+}
 
-// Check if exactly one matching user was found in the database
-if(mysqli_num_rows($result)==1)
-{
-    // Fetch user details as an associative array
-    $user = mysqli_fetch_assoc($result);
-    $userid = $user['userid'];
+// Fetch user by userid (prepared statement — SQL injection safe)
+$stmt = $conn->prepare("SELECT userid, name, role, department, email, status, password FROM users WHERE userid = ? LIMIT 1");
+$stmt->bind_param("s", $userid);
+$stmt->execute();
+$result = $stmt->get_result();
 
-    // Insert a new login log entry with the current timestamp
-    mysqli_query(
-        $conn,
-        "INSERT INTO login_logs(userid, login_time)
-         VALUES('$userid', NOW())"
-    );
+if ($result->num_rows !== 1) {
+    // No user found
+    header("Location: login.php?error=" . urlencode("Invalid User ID or Password."));
+    exit();
+}
 
-    // Store the generated login log ID in the session to track logout time later
-    $_SESSION['log_id'] = mysqli_insert_id($conn);
+$user = $result->fetch_assoc();
+$stmt->close();
 
-    // Save key user info in session variables for accessibility throughout the app
-    $_SESSION['userid'] = $user['userid'];
-    $_SESSION['name'] = $user['name'];
-    $_SESSION['role'] = $user['role'];
+// ── Password check (plain text comparison) ────────────────────────────────
+// Passwords are stored as plain text in the database.
+// No hashing is performed. The comparison is direct string equality.
+if ($password !== $user['password']) {
+    header("Location: login.php?error=" . urlencode("Invalid User ID or Password."));
+    exit();
+}
 
-    // If 'remember_me' was checked, set a cookie to persist the User ID for 3 days
-    if (isset($_POST['remember_me'])) {
-        setcookie("remember_user", $user['userid'], time() + 259200, "/"); 
-    }
+// ── Login success ─────────────────────────────────────────────────────────
+session_regenerate_id(true);
 
-    // Redirect the user based on their specific administrative or employee role
-    if($user['role']=="employee")
-    {
+$_SESSION['userid'] = $user['userid'];
+$_SESSION['name']   = $user['name'];
+$_SESSION['role']   = $user['role'];
+
+// Log the login event
+$log = $conn->prepare("INSERT INTO login_logs (userid, login_time) VALUES (?, NOW())");
+$log->bind_param("s", $userid);
+$log->execute();
+$_SESSION['log_id'] = $conn->insert_id;
+$log->close();
+
+// Remember Me cookie (3 days)
+if (!empty($_POST['remember_me'])) {
+    setcookie("remember_user", $userid, time() + (3 * 24 * 60 * 60), "/", "", false, true);
+}
+
+// Role-based dashboard redirect
+switch ($user['role']) {
+    case "employee":
         header("Location: dashboard_e.php");
-    }
-    else if($user['role']=="Hr_admin")
-    {
+        break;
+    case "Hr_admin":
         header("Location: dashboard_a.php");
-    }
-    else if($user['role']=="Technical_admin")
-    {
+        break;
+    case "Technical_admin":
         header("Location: dashboard_t.php");
-    }
-}
-else
-{
-    // Display error message if credentials do not match any user record
-    echo "Invalid User ID or Password";
+        break;
+    default:
+        session_destroy();
+        header("Location: login.php?error=" . urlencode("Unrecognised role. Contact Tech Admin."));
+        break;
 }
 
+$conn->close();
+exit();
 ?>
-
-

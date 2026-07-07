@@ -160,6 +160,151 @@ mysqli_stmt_close($stmt);
 
 $lastLogin = $login['login_time'] ?? 'No login history';
 
+/* ================================================================
+   HYBRID ROUTING DECISION
+   ---------------------------------------------------------------
+   Determine whether this question is about personal ERP data
+   (attendance, leaves, profile, navigation) or about company
+   policies / HR documents.
+
+   Personal ERP queries → answered by Gemini with the system
+   instruction built below (existing Phase I logic, no change).
+
+   Policy / document queries → forwarded to FastAPI RAG pipeline
+   which retrieves relevant chunks and calls Gemini separately.
+
+   This keeps token usage minimal for personal queries (no document
+   context loaded) while enabling document-grounded answers for
+   policy questions.
+================================================================ */
+
+function is_personal_erp_query(string $message): bool
+{
+    $msg = strtolower(trim($message));
+
+    // Force RAG routing if explicitly asking about policies, rules, processes, or how to apply
+    $policy_indicators = [
+        'policy', 'rule', 'procedure', 'regulation', 'guideline', 
+        'manual', 'document', 'process', 'how to apply', 'how can i apply', 
+        'steps to apply', 'how to get', 'how can i get'
+    ];
+    foreach ($policy_indicators as $indicator) {
+        if (strpos($msg, $indicator) !== false) {
+            return false; // Route to RAG
+        }
+    }
+
+    // Personal ERP keywords – actual balance check, punch logging, personal history, or profile metrics
+    $personal_patterns = [
+        // Attendance logs
+        'punch in', 'punch out', 'punched in', 'punched out',
+        'clock in', 'clock out', 'check in', 'check out',
+        'my hours', 'weekly hours', 'hours worked', 'work hours',
+        'late arrival', 'my schedule',
+
+        // Leave balances / personal records
+        'leave balance', 'leaves left', 'leaves remaining', 'remaining leave',
+        'how many leaves', 'leave status', 'leave history',
+        'my leaves', 'my balance', 'my attendance', 'last login',
+
+        // Profile / personal identity
+        'my name', 'my email', 'my role', 'my department', 'my id',
+        'my profile', 'my account', 'my status', 'who am i',
+        'my employee', 'my userid',
+
+        // Navigation
+        'navigate', 'go to', 'find the', 'open the', 'access the', 'use the',
+        'dashboard', 'logout', 'log out', 'login', 'log in',
+
+        // Direct database events
+        'when did i', 'did i punch', 'am i present', 'am i on leave', 'today'
+    ];
+
+    foreach ($personal_patterns as $pattern) {
+        if (strpos($msg, $pattern) !== false) {
+            return true; // Route to Personal
+        }
+    }
+
+    // If they just type "sick leave", "casual leave", "annual leave" without personal words like "my", "remaining", "balance", 
+    // it's likely a query about the policy itself, so route to RAG.
+    return false;
+}
+
+$use_rag = !is_personal_erp_query($userMessage);
+
+/* ================================================================
+   PATH A – RAG PIPELINE (policy / document questions)
+   Forward to FastAPI /chat and return document-grounded answer.
+================================================================ */
+
+if ($use_rag) {
+
+    $fastapi_url = 'http://127.0.0.1:8000/chat';
+
+    $payload_rag = json_encode([
+        'question' => $userMessage,
+        'user_id'  => $userid,
+    ]);
+
+    $ch_rag = curl_init($fastapi_url);
+    curl_setopt_array($ch_rag, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST           => true,
+        CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
+        CURLOPT_POSTFIELDS     => $payload_rag,
+        CURLOPT_TIMEOUT        => 45,
+    ]);
+
+    $rag_raw   = curl_exec($ch_rag);
+    $rag_code  = curl_getinfo($ch_rag, CURLINFO_HTTP_CODE);
+    $rag_err   = curl_error($ch_rag);
+    curl_close($ch_rag);
+
+    // If FastAPI is unreachable, fall back gracefully to Phase I
+    if ($rag_raw === false || !empty($rag_err) || $rag_code !== 200) {
+        $use_rag = false; // fall through to Phase I below
+    } else {
+
+        $rag_data = json_decode($rag_raw, true);
+        $rag_answer = $rag_data['answer'] ?? "I couldn't find an answer in the uploaded documents.";
+        $rag_sources = $rag_data['sources'] ?? [];
+
+        // Append source citations to the answer
+        if (!empty($rag_sources)) {
+            $rag_answer .= "\n\n📄 Sources:";
+            foreach ($rag_sources as $src) {
+                $rag_answer .= "\n• {$src['filename']} (Page {$src['page']})";
+            }
+        }
+
+        /* ── Save chat history ─────────────────────────────────── */
+        $stmt = mysqli_prepare($conn,
+            "INSERT INTO chat_memory (userid, sender, message)
+             VALUES (?, 'user', ?)");
+        mysqli_stmt_bind_param($stmt, "ss", $userid, $userMessage);
+        mysqli_stmt_execute($stmt);
+        mysqli_stmt_close($stmt);
+
+        $stmt = mysqli_prepare($conn,
+            "INSERT INTO chat_memory (userid, sender, message)
+             VALUES (?, 'ai', ?)");
+        mysqli_stmt_bind_param($stmt, "ss", $userid, $rag_answer);
+        mysqli_stmt_execute($stmt);
+        mysqli_stmt_close($stmt);
+
+        mysqli_close($conn);
+        echo json_encode(['response' => $rag_answer]);
+        exit();
+    }
+}
+
+/* ================================================================
+   PATH B – DIRECT GEMINI (personal ERP data questions)
+   Original Phase I logic – unchanged, token-efficient system
+   instruction with live ERP data injected, no document context.
+================================================================ */
+
 /* -------------------------------
    SYSTEM INSTRUCTION
 --------------------------------*/
