@@ -171,6 +171,13 @@ if (isset($_POST['submit_ai_review'])) {
     $message = "AI response review submitted to Tech Admin for approval.";
 }
 
+// 12. Handle POST Request: Delete AI Log Entry
+if (isset($_POST['delete_ai_log'])) {
+    $log_id = intval($_POST['log_id']);
+    mysqli_query($conn, "DELETE FROM ai_logs WHERE id = $log_id");
+    $message = "AI log entry #$log_id has been deleted.";
+}
+
 // Fetch aggregate and metric details for rendering the main overview panel stats
 $user_query = mysqli_query($conn, "SELECT * FROM users WHERE userid = '$userid'");
 $user = mysqli_fetch_assoc($user_query);
@@ -492,6 +499,81 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
         .status-badge.rejected { background: #f8d7da; color: #721c24; }
         .status-badge.submitted { background: #d1ecf1; color: #0c5460; }
         .status-badge.draft { background: #e2e8f0; color: #4a5568; }
+        .status-badge.original { background: #e2e8f0; color: #4a5568; }
+        .status-badge.editedbyhr { background: #fff3cd; color: #856404; }
+        .status-badge.approvedbytech { background: #d4edda; color: #155724; }
+        .status-badge.accepted { background: #d4edda; color: #155724; }
+
+        /* AI Management filter tabs */
+        .ai-filter-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .ai-filter-tab {
+            padding: 6px 16px;
+            border-radius: 20px;
+            border: 2px solid #e9ecef;
+            background: white;
+            color: #555;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .ai-filter-tab:hover { border-color: #8e44ad; color: #5f2397; }
+        .ai-filter-tab.active { background: #5f2397; color: white; border-color: #5f2397; }
+
+        .ai-stats-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 14px;
+            margin-bottom: 20px;
+        }
+        .ai-stat-card {
+            background: #fdfcff;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 14px 16px;
+            text-align: center;
+        }
+        .ai-stat-card .stat-val {
+            font-size: 26px;
+            font-weight: 800;
+            color: #5f2397;
+        }
+        .ai-stat-card .stat-lbl {
+            font-size: 11px;
+            color: #888;
+            margin-top: 2px;
+        }
+        .ai-stat-card.danger .stat-val { color: #e74c3c; }
+        .ai-stat-card.warning .stat-val { color: #e67e22; }
+        .ai-stat-card.success .stat-val { color: #27ae60; }
+
+        .ai-search-bar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 16px;
+            align-items: center;
+        }
+        .ai-search-bar input {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-size: 13px;
+            margin: 0;
+        }
+        .truncate-text {
+            max-width: 180px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: block;
+            cursor: default;
+        }
 
         /* Integrated AI Chat Drawer */
         #aiChatDrawer {
@@ -1006,62 +1088,151 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
 
             
             <div id="aimgmt" class="section">
-                <h3>Manage AI & Queries</h3>
-                <p>Review AI response logs, track hallucinations, and manually correct responses. Unsolvable or low-accuracy queries can be edited and submitted to Tech Admin for final approval.</p>
+                <h3>&#129302; Manage AI &amp; Queries</h3>
+                <p>Review AI response logs, track hallucinations, and manually correct responses. Low-accuracy or hallucinated queries can be edited and submitted to Tech Admin for final approval.</p>
 
-                <h4>Flagged & Unsolvable Queries</h4>
-                <table>
-                    <tr>
-                        <th>ID</th>
-                        <th>User ID</th>
-                        <th>Query</th>
-                        <th>AI Response</th>
-                        <th>Accuracy</th>
-                        <th>Hallucination?</th>
-                        <th>Review Status</th>
-                        <th>HR Edited Response</th>
-                        <th>Action</th>
-                    </tr>
-                    <?php 
-                    $flagged_queries = mysqli_query($conn, "SELECT * FROM ai_logs ORDER BY id DESC");
-                    if (mysqli_num_rows($flagged_queries) == 0): ?>
-                        <tr><td colspan="9" style="text-align:center;">No AI queries logged yet.</td></tr>
-                    <?php else: ?>
-                        <?php while ($log = mysqli_fetch_assoc($flagged_queries)): 
-                            $is_unsolvable = ($log['performance_score'] < 80 || $log['hallucination_detected'] == 1);
-                            $row_style = $is_unsolvable ? "style='background-color: #fff5f5;'" : "";
-                        ?>
-                            <tr <?php echo $row_style; ?>>
-                                <td><?php echo $log['id']; ?></td>
-                                <td><?php echo htmlspecialchars($log['userid']); ?></td>
-                                <td><strong><?php echo htmlspecialchars($log['query']); ?></strong></td>
-                                <td><small><?php echo htmlspecialchars($log['response']); ?></small></td>
-                                <td>
-                                    <span style="font-weight:bold; color:<?php echo $is_unsolvable ? '#e74c3c' : '#2ecc71'; ?>;">
-                                        <?php echo $log['performance_score']; ?>%
+                <?php
+                // Aggregate AI stats for this section
+                $ai_total_res    = mysqli_query($conn, "SELECT COUNT(*) as c FROM ai_logs");
+                $ai_total        = mysqli_fetch_assoc($ai_total_res)['c'];
+                $ai_flagged_res  = mysqli_query($conn, "SELECT COUNT(*) as c FROM ai_logs WHERE performance_score < 80 OR hallucination_detected = 1");
+                $ai_flagged      = mysqli_fetch_assoc($ai_flagged_res)['c'];
+                $ai_edited_res   = mysqli_query($conn, "SELECT COUNT(*) as c FROM ai_logs WHERE review_status = 'Edited_by_HR'");
+                $ai_edited       = mysqli_fetch_assoc($ai_edited_res)['c'];
+                $ai_approved_res = mysqli_query($conn, "SELECT COUNT(*) as c FROM ai_logs WHERE review_status = 'Approved_by_Tech'");
+                $ai_approved     = mysqli_fetch_assoc($ai_approved_res)['c'];
+                $ai_halluc_res   = mysqli_query($conn, "SELECT COUNT(*) as c FROM ai_logs WHERE hallucination_detected = 1");
+                $ai_halluc       = mysqli_fetch_assoc($ai_halluc_res)['c'];
+                ?>
+
+                <!-- Stats Cards -->
+                <div class="ai-stats-row">
+                    <div class="ai-stat-card">
+                        <div class="stat-val"><?php echo $ai_total; ?></div>
+                        <div class="stat-lbl">Total Queries</div>
+                    </div>
+                    <div class="ai-stat-card danger">
+                        <div class="stat-val"><?php echo $ai_flagged; ?></div>
+                        <div class="stat-lbl">Flagged / Low Accuracy</div>
+                    </div>
+                    <div class="ai-stat-card danger">
+                        <div class="stat-val"><?php echo $ai_halluc; ?></div>
+                        <div class="stat-lbl">Hallucinations</div>
+                    </div>
+                    <div class="ai-stat-card warning">
+                        <div class="stat-val"><?php echo $ai_edited; ?></div>
+                        <div class="stat-lbl">Pending Tech Review</div>
+                    </div>
+                    <div class="ai-stat-card success">
+                        <div class="stat-val"><?php echo $ai_approved; ?></div>
+                        <div class="stat-lbl">Approved by Tech</div>
+                    </div>
+                </div>
+
+                <!-- Search + Filter Bar -->
+                <div class="ai-search-bar">
+                    <input type="text" id="aiLogSearch" placeholder="&#128269; Search by query, user, or response..." oninput="filterAILogs()">
+                </div>
+                <div class="ai-filter-tabs">
+                    <button class="ai-filter-tab active" onclick="setAIFilter('all', this)">All (<?php echo $ai_total; ?>)</button>
+                    <button class="ai-filter-tab" onclick="setAIFilter('flagged', this)">&#128680; Flagged (<?php echo $ai_flagged; ?>)</button>
+                    <button class="ai-filter-tab" onclick="setAIFilter('editedbyhr', this)">&#9999; Edited by HR (<?php echo $ai_edited; ?>)</button>
+                    <button class="ai-filter-tab" onclick="setAIFilter('approvedbytech', this)">&#10003; Approved (<?php echo $ai_approved; ?>)</button>
+                    <button class="ai-filter-tab" onclick="setAIFilter('original', this)">Original</button>
+                </div>
+
+                <table id="aiLogsTable">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>User</th>
+                            <th>Query</th>
+                            <th>AI Response</th>
+                            <th>Accuracy</th>
+                            <th>Hallucination</th>
+                            <th>Review Status</th>
+                            <th>Edited Response</th>
+                            <th>Review Notes</th>
+                            <th>Time</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    <?php
+                    $ai_logs_hr = mysqli_query($conn, "SELECT * FROM ai_logs ORDER BY id DESC");
+                    if (mysqli_num_rows($ai_logs_hr) == 0): ?>
+                        <tr><td colspan="11" style="text-align:center; padding:20px; color:#888;">&#128203; No AI queries logged yet. Queries will appear here once employees use the AI chatbot.</td></tr>
+                    <?php else:
+                        while ($log = mysqli_fetch_assoc($ai_logs_hr)):
+                            $is_flagged = ($log['performance_score'] < 80 || $log['hallucination_detected'] == 1);
+                            $status_cls = strtolower(str_replace('_', '', $log['review_status']));
+                            $row_data_status = $status_cls;
+                            $row_data_flagged = $is_flagged ? 'flagged' : 'ok';
+                            $row_bg = $is_flagged ? "background:#fff5f5;" : "";
+                    ?>
+                        <tr data-status="<?php echo $row_data_status; ?>" data-flagged="<?php echo $row_data_flagged; ?>" style="<?php echo $row_bg; ?>">
+                            <td><strong>#<?php echo $log['id']; ?></strong></td>
+                            <td><?php echo htmlspecialchars($log['userid']); ?></td>
+                            <td>
+                                <span class="truncate-text" title="<?php echo htmlspecialchars($log['query']); ?>">
+                                    <?php echo htmlspecialchars($log['query']); ?>
+                                </span>
+                            </td>
+                            <td>
+                                <span class="truncate-text" title="<?php echo htmlspecialchars($log['response']); ?>">
+                                    <?php echo htmlspecialchars($log['response']); ?>
+                                </span>
+                            </td>
+                            <td>
+                                <span style="font-weight:bold; color:<?php echo ($log['performance_score'] < 80) ? '#e74c3c' : '#27ae60'; ?>">
+                                    <?php echo $log['performance_score']; ?>%
+                                </span>
+                            </td>
+                            <td style="text-align:center;">
+                                <?php if ($log['hallucination_detected']): ?>
+                                    <span style="color:#e74c3c; font-weight:bold;">&#9888; YES</span>
+                                <?php else: ?>
+                                    <span style="color:#27ae60;">NO</span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <span class="status-badge <?php echo $status_cls; ?>">
+                                    <?php echo htmlspecialchars($log['review_status']); ?>
+                                </span>
+                            </td>
+                            <td>
+                                <?php if ($log['edited_response']): ?>
+                                    <span class="truncate-text" style="color:#2980b9;" title="<?php echo htmlspecialchars($log['edited_response']); ?>">
+                                        <em><?php echo htmlspecialchars($log['edited_response']); ?></em>
                                     </span>
-                                </td>
-                                <td style="font-weight:bold; color:<?php echo $log['hallucination_detected'] ? '#e74c3c' : '#2ecc71'; ?>;">
-                                    <?php echo $log['hallucination_detected'] ? 'YES' : 'NO'; ?>
-                                </td>
-                                <td>
-                                    <span class="status-badge <?php echo strtolower(str_replace('_', '', $log['review_status'])); ?>">
-                                        <?php echo htmlspecialchars($log['review_status']); ?>
-                                    </span>
-                                </td>
-                                <td>
-                                    <?php if ($log['edited_response']): ?>
-                                        <small><em><?php echo htmlspecialchars($log['edited_response']); ?></em></small>
+                                <?php else: ?>
+                                    <span style="color:#aaa; font-size:12px;">&#8212;</span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <span class="truncate-text" style="font-size:12px; color:#666;" title="<?php echo htmlspecialchars($log['review_notes'] ?: ''); ?>">
+                                    <?php echo $log['review_notes'] ? htmlspecialchars($log['review_notes']) : '<span style="color:#aaa;">&#8212;</span>'; ?>
+                                </span>
+                            </td>
+                            <td style="white-space:nowrap; font-size:11px; color:#888;">
+                                <?php echo date('d M y, H:i', strtotime($log['timestamp'])); ?>
+                            </td>
+                            <td style="white-space:nowrap;">
+                                <div style="display:flex; flex-direction:column; gap:5px;">
+                                    <?php if ($log['review_status'] !== 'Approved_by_Tech'): ?>
+                                        <button class="btn-approve" style="font-size:11px; padding:4px 8px;" onclick='openAIEditModal(<?php echo json_encode($log); ?>)'>&#9999; Edit &amp; Submit</button>
                                     <?php else: ?>
-                                        <span style="color:#aaa;">None</span>
+                                        <button class="btn-approve" style="font-size:11px; padding:4px 8px; opacity:0.6;" onclick='openAIEditModal(<?php echo json_encode($log); ?>)'>&#128065; View</button>
                                     <?php endif; ?>
-                                </td>
-                                <td>
-                                    <button class="btn-approve" onclick='openAIEditModal(<?php echo json_encode($log); ?>)'>Edit & Review</button>
-                                </td>
-                            </tr>
-                        <?php endwhile; ?>
-                    <?php endif; ?>
+                                    <form method="POST" style="margin:0;" onsubmit="return confirm('Delete AI log #<?php echo $log['id']; ?>? This cannot be undone.');">
+                                        <input type="hidden" name="log_id" value="<?php echo $log['id']; ?>">
+                                        <button type="submit" name="delete_ai_log" class="btn-reject" style="font-size:11px; padding:4px 8px; width:100%;">&#128465; Delete</button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                    <?php endwhile; endif; ?>
+                    </tbody>
                 </table>
             </div>
 
@@ -1162,6 +1333,41 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                 }
                 function closeAIEditModal() {
                     document.getElementById('aiEditModal').style.display = 'none';
+                }
+
+                // AI Log filter tab state
+                let currentAIFilter = 'all';
+
+                function setAIFilter(filter, btn) {
+                    currentAIFilter = filter;
+                    document.querySelectorAll('.ai-filter-tab').forEach(t => t.classList.remove('active'));
+                    btn.classList.add('active');
+                    applyAIFilters();
+                }
+
+                function filterAILogs() {
+                    applyAIFilters();
+                }
+
+                function applyAIFilters() {
+                    const searchVal = (document.getElementById('aiLogSearch')?.value || '').toLowerCase();
+                    const rows = document.querySelectorAll('#aiLogsTable tbody tr');
+                    rows.forEach(row => {
+                        const status = row.getAttribute('data-status') || '';
+                        const flagged = row.getAttribute('data-flagged') || '';
+                        const text = row.textContent.toLowerCase();
+
+                        // Status filter
+                        let statusMatch = false;
+                        if (currentAIFilter === 'all') statusMatch = true;
+                        else if (currentAIFilter === 'flagged') statusMatch = (flagged === 'flagged');
+                        else statusMatch = (status === currentAIFilter);
+
+                        // Search filter
+                        const searchMatch = !searchVal || text.includes(searchVal);
+
+                        row.style.display = (statusMatch && searchMatch) ? '' : 'none';
+                    });
                 }
             </script>
             

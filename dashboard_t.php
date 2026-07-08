@@ -201,6 +201,13 @@ if (isset($_POST['submit_tech_ai_edit'])) {
     $message = "AI response #$log_id directly updated and approved by Tech Admin.";
 }
 
+// 12. Handle POST Request: Delete AI Log Entry (Tech Admin)
+if (isset($_POST['delete_ai_log'])) {
+    $log_id = intval($_POST['log_id']);
+    mysqli_query($conn, "DELETE FROM ai_logs WHERE id = $log_id");
+    $message = "AI log entry #$log_id permanently deleted.";
+}
+
 // Retrieve finalized user details, query AI performance audit logs, and calculate aggregate AI metric stats
 $user_query = mysqli_query($conn, "SELECT * FROM users WHERE userid = '$userid'");
 $user = mysqli_fetch_assoc($user_query);
@@ -508,6 +515,83 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
         .status-badge.draft { background: #e2e8f0; color: #4a5568; }
         .status-badge.submitted { background: #d1ecf1; color: #0c5460; }
         .status-badge.accepted { background: #d4edda; color: #155724; }
+        .status-badge.original { background: #e2e8f0; color: #4a5568; }
+        .status-badge.editedbyhr { background: #fff3cd; color: #856404; }
+        .status-badge.approvedbytech { background: #d4edda; color: #155724; }
+        .status-badge.pending { background: #ffeeba; color: #856404; }
+        .status-badge.approved { background: #d4edda; color: #155724; }
+        .status-badge.rejected { background: #f8d7da; color: #721c24; }
+
+        /* AI Review filter tabs */
+        .ai-filter-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .ai-filter-tab {
+            padding: 6px 16px;
+            border-radius: 20px;
+            border: 2px solid #e9ecef;
+            background: white;
+            color: #555;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .ai-filter-tab:hover { border-color: #8e44ad; color: #5f2397; }
+        .ai-filter-tab.active { background: #5f2397; color: white; border-color: #5f2397; }
+
+        .ai-stats-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 14px;
+            margin-bottom: 20px;
+        }
+        .ai-stat-card {
+            background: #fdfcff;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 14px 16px;
+            text-align: center;
+        }
+        .ai-stat-card .stat-val {
+            font-size: 26px;
+            font-weight: 800;
+            color: #5f2397;
+        }
+        .ai-stat-card .stat-lbl {
+            font-size: 11px;
+            color: #888;
+            margin-top: 2px;
+        }
+        .ai-stat-card.danger .stat-val { color: #e74c3c; }
+        .ai-stat-card.warning .stat-val { color: #e67e22; }
+        .ai-stat-card.success .stat-val { color: #27ae60; }
+
+        .ai-search-bar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 16px;
+            align-items: center;
+        }
+        .ai-search-bar input {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-size: 13px;
+            margin: 0;
+        }
+        .truncate-text {
+            max-width: 160px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: block;
+            cursor: default;
+        }
 
         /* Integrated AI Chat Drawer */
         #aiChatDrawer {
@@ -968,77 +1052,156 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
 
             
             <div id="aireview" class="section">
-                <h3>Manage AI Reviews & Approve HR Edits</h3>
-                <p>Review AI response logs. Approve or reject edits submitted by HR. You can also directly edit and approve any response in one step.</p>
+                <h3>&#129302; Manage AI Reviews &amp; Approve HR Edits</h3>
+                <p>Review AI response logs. Approve or reject edits submitted by HR Admin. You can also directly edit and approve any response in one step.</p>
 
-                <table>
-                    <tr>
-                        <th>ID</th>
-                        <th>User ID</th>
-                        <th>Query</th>
-                        <th>Original AI Response</th>
-                        <th>HR Edited Response</th>
-                        <th>Review Notes</th>
-                        <th>Accuracy</th>
-                        <th>Hallucination?</th>
-                        <th>Review Status</th>
-                        <th>Actions</th>
-                    </tr>
+                <?php
+                // Aggregate AI review stats
+                $t_total_res    = mysqli_query($conn, "SELECT COUNT(*) as c FROM ai_logs");
+                $t_total        = mysqli_fetch_assoc($t_total_res)['c'];
+                $t_pending_res  = mysqli_query($conn, "SELECT COUNT(*) as c FROM ai_logs WHERE review_status = 'Edited_by_HR'");
+                $t_pending      = mysqli_fetch_assoc($t_pending_res)['c'];
+                $t_approved_res = mysqli_query($conn, "SELECT COUNT(*) as c FROM ai_logs WHERE review_status = 'Approved_by_Tech'");
+                $t_approved     = mysqli_fetch_assoc($t_approved_res)['c'];
+                $t_original_res = mysqli_query($conn, "SELECT COUNT(*) as c FROM ai_logs WHERE review_status = 'Original'");
+                $t_original     = mysqli_fetch_assoc($t_original_res)['c'];
+                $t_halluc_res   = mysqli_query($conn, "SELECT COUNT(*) as c FROM ai_logs WHERE hallucination_detected = 1");
+                $t_halluc       = mysqli_fetch_assoc($t_halluc_res)['c'];
+                ?>
+
+                <!-- Stats Cards -->
+                <div class="ai-stats-row">
+                    <div class="ai-stat-card">
+                        <div class="stat-val"><?php echo $t_total; ?></div>
+                        <div class="stat-lbl">Total Logged Queries</div>
+                    </div>
+                    <div class="ai-stat-card warning">
+                        <div class="stat-val"><?php echo $t_pending; ?></div>
+                        <div class="stat-lbl">Awaiting Your Review</div>
+                    </div>
+                    <div class="ai-stat-card success">
+                        <div class="stat-val"><?php echo $t_approved; ?></div>
+                        <div class="stat-lbl">Approved by You</div>
+                    </div>
+                    <div class="ai-stat-card">
+                        <div class="stat-val"><?php echo $t_original; ?></div>
+                        <div class="stat-lbl">Original (No Edits)</div>
+                    </div>
+                    <div class="ai-stat-card danger">
+                        <div class="stat-val"><?php echo $t_halluc; ?></div>
+                        <div class="stat-lbl">Hallucinations</div>
+                    </div>
+                </div>
+
+                <!-- Search + Filter Bar -->
+                <div class="ai-search-bar">
+                    <input type="text" id="techAILogSearch" placeholder="&#128269; Search by query, user, response, or notes..." oninput="filterTechAILogs()">
+                </div>
+                <div class="ai-filter-tabs">
+                    <button class="ai-filter-tab active" onclick="setTechAIFilter('all', this)">All (<?php echo $t_total; ?>)</button>
+                    <button class="ai-filter-tab" onclick="setTechAIFilter('editedbyhr', this)">&#9999; Pending Review (<?php echo $t_pending; ?>)</button>
+                    <button class="ai-filter-tab" onclick="setTechAIFilter('approvedbytech', this)">&#10003; Approved (<?php echo $t_approved; ?>)</button>
+                    <button class="ai-filter-tab" onclick="setTechAIFilter('original', this)">Original (<?php echo $t_original; ?>)</button>
+                    <button class="ai-filter-tab" onclick="setTechAIFilter('flagged', this)">&#128680; Hallucinations (<?php echo $t_halluc; ?>)</button>
+                </div>
+
+                <table id="techAILogsTable">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>User</th>
+                            <th>Query</th>
+                            <th>Original AI Response</th>
+                            <th>HR Edited Response</th>
+                            <th>Review Notes</th>
+                            <th>Accuracy</th>
+                            <th>Hallucination</th>
+                            <th>Status</th>
+                            <th>Time</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
                     <?php
                     $all_reviews = mysqli_query($conn, "SELECT * FROM ai_logs ORDER BY id DESC");
                     if (mysqli_num_rows($all_reviews) == 0): ?>
-                        <tr><td colspan="10" style="text-align:center;">No AI queries logged yet.</td></tr>
-                    <?php else: ?>
-                        <?php while ($log = mysqli_fetch_assoc($all_reviews)):
+                        <tr><td colspan="11" style="text-align:center; padding:20px; color:#888;">&#128203; No AI queries logged yet.</td></tr>
+                    <?php else:
+                        while ($log = mysqli_fetch_assoc($all_reviews)):
                             $status = $log['review_status'];
                             $is_flagged = ($log['performance_score'] < 80 || $log['hallucination_detected'] == 1);
-                            $row_style = $is_flagged ? "style='background-color:#fff5f5;'" : "";
-                        ?>
-                            <tr <?php echo $row_style; ?>>
-                                <td><?php echo $log['id']; ?></td>
-                                <td><?php echo htmlspecialchars($log['userid']); ?></td>
-                                <td><strong><?php echo htmlspecialchars($log['query']); ?></strong></td>
-                                <td><small><?php echo htmlspecialchars($log['response']); ?></small></td>
-                                <td>
-                                    <?php if ($log['edited_response']): ?>
-                                        <small style="color:#2980b9;"><em><?php echo htmlspecialchars($log['edited_response']); ?></em></small>
-                                    <?php else: ?>
-                                        <span style="color:#aaa;">None</span>
-                                    <?php endif; ?>
-                                </td>
-                                <td><small><?php echo htmlspecialchars($log['review_notes'] ?: '-'); ?></small></td>
-                                <td><strong style="color:<?php echo $is_flagged ? '#e74c3c' : '#2ecc71'; ?>"><?php echo $log['performance_score']; ?>%</strong></td>
-                                <td style="font-weight:bold; color:<?php echo $log['hallucination_detected'] ? '#e74c3c' : '#2ecc71'; ?>">
-                                    <?php echo $log['hallucination_detected'] ? 'YES' : 'NO'; ?>
-                                </td>
-                                <td>
-                                    <?php
-                                    $badge_class = 'draft';
-                                    if ($status === 'Edited_by_HR') $badge_class = 'submitted';
-                                    if ($status === 'Approved_by_Tech') $badge_class = 'accepted';
-                                    ?>
-                                    <span class="status-badge <?php echo $badge_class; ?>">
-                                        <?php echo htmlspecialchars($status); ?>
+                            $status_cls = strtolower(str_replace('_', '', $status));
+                            $row_bg = ($status === 'Edited_by_HR') ? 'background:#fffbea;' : ($is_flagged ? 'background:#fff5f5;' : '');
+                    ?>
+                        <tr data-status="<?php echo $status_cls; ?>" data-flagged="<?php echo $is_flagged ? 'flagged' : 'ok'; ?>" style="<?php echo $row_bg; ?>">
+                            <td><strong>#<?php echo $log['id']; ?></strong></td>
+                            <td><?php echo htmlspecialchars($log['userid']); ?></td>
+                            <td>
+                                <span class="truncate-text" title="<?php echo htmlspecialchars($log['query']); ?>">
+                                    <strong><?php echo htmlspecialchars($log['query']); ?></strong>
+                                </span>
+                            </td>
+                            <td>
+                                <span class="truncate-text" title="<?php echo htmlspecialchars($log['response']); ?>">
+                                    <?php echo htmlspecialchars($log['response']); ?>
+                                </span>
+                            </td>
+                            <td>
+                                <?php if ($log['edited_response']): ?>
+                                    <span class="truncate-text" style="color:#2980b9;" title="<?php echo htmlspecialchars($log['edited_response']); ?>">
+                                        <em><?php echo htmlspecialchars($log['edited_response']); ?></em>
                                     </span>
-                                </td>
-                                <td>
-                                    <div style="display:flex; flex-direction:column; gap:5px;">
-                                        <?php if ($status === 'Edited_by_HR'): ?>
-                                            <form method="POST" style="display:inline;">
-                                                <input type="hidden" name="log_id" value="<?php echo $log['id']; ?>">
-                                                <button type="submit" name="approve_ai_review" class="btn-approve" style="width:100%;">Approve</button>
-                                            </form>
-                                            <form method="POST" style="display:inline;">
-                                                <input type="hidden" name="log_id" value="<?php echo $log['id']; ?>">
-                                                <button type="submit" name="reject_ai_review" class="btn-reject" style="width:100%;">Reject</button>
-                                            </form>
-                                        <?php endif; ?>
-                                        <button class="btn-primary" style="padding:4px 8px; font-size:11px; width:100%;" onclick='openTechAIEditModal(<?php echo json_encode($log); ?>)'>Direct Edit</button>
-                                    </div>
-                                </td>
-                            </tr>
-                        <?php endwhile; ?>
-                    <?php endif; ?>
+                                <?php else: ?>
+                                    <span style="color:#aaa; font-size:12px;">&#8212;</span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <span class="truncate-text" style="font-size:12px; color:#666;" title="<?php echo htmlspecialchars($log['review_notes'] ?: ''); ?>">
+                                    <?php echo $log['review_notes'] ? htmlspecialchars($log['review_notes']) : '<span style="color:#aaa;">&#8212;</span>'; ?>
+                                </span>
+                            </td>
+                            <td>
+                                <strong style="color:<?php echo ($log['performance_score'] < 80) ? '#e74c3c' : '#27ae60'; ?>">
+                                    <?php echo $log['performance_score']; ?>%
+                                </strong>
+                            </td>
+                            <td style="text-align:center;">
+                                <?php if ($log['hallucination_detected']): ?>
+                                    <span style="color:#e74c3c; font-weight:bold;">&#9888; YES</span>
+                                <?php else: ?>
+                                    <span style="color:#27ae60;">NO</span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <span class="status-badge <?php echo $status_cls; ?>">
+                                    <?php echo htmlspecialchars($status); ?>
+                                </span>
+                            </td>
+                            <td style="white-space:nowrap; font-size:11px; color:#888;">
+                                <?php echo date('d M y, H:i', strtotime($log['timestamp'])); ?>
+                            </td>
+                            <td style="white-space:nowrap;">
+                                <div style="display:flex; flex-direction:column; gap:5px;">
+                                    <?php if ($status === 'Edited_by_HR'): ?>
+                                        <form method="POST" style="margin:0;">
+                                            <input type="hidden" name="log_id" value="<?php echo $log['id']; ?>">
+                                            <button type="submit" name="approve_ai_review" class="btn-approve" style="font-size:11px; padding:4px 8px; width:100%;">&#10003; Approve</button>
+                                        </form>
+                                        <form method="POST" style="margin:0;">
+                                            <input type="hidden" name="log_id" value="<?php echo $log['id']; ?>">
+                                            <button type="submit" name="reject_ai_review" class="btn-reject" style="font-size:11px; padding:4px 8px; width:100%;">&#10007; Reject</button>
+                                        </form>
+                                    <?php endif; ?>
+                                    <button class="btn-primary" style="padding:4px 8px; font-size:11px; width:100%;" onclick='openTechAIEditModal(<?php echo json_encode($log); ?>)'>&#9999; Direct Edit</button>
+                                    <form method="POST" style="margin:0;" onsubmit="return confirm('Permanently delete AI log #<?php echo $log['id']; ?>?');">
+                                        <input type="hidden" name="log_id" value="<?php echo $log['id']; ?>">
+                                        <button type="submit" name="delete_ai_log" style="background:#c0392b; color:white; border:none; padding:4px 8px; font-size:11px; border-radius:3px; cursor:pointer; font-weight:bold; width:100%;">&#128465; Delete</button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                    <?php endwhile; endif; ?>
+                    </tbody>
                 </table>
             </div>
 
@@ -1122,6 +1285,38 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                 }
                 function closeTechAIEditModal() {
                     document.getElementById('techAIEditModal').style.display = 'none';
+                }
+
+                // Tech AI Review filter tab state
+                let currentTechAIFilter = 'all';
+
+                function setTechAIFilter(filter, btn) {
+                    currentTechAIFilter = filter;
+                    document.querySelectorAll('.ai-filter-tab').forEach(t => t.classList.remove('active'));
+                    btn.classList.add('active');
+                    applyTechAIFilters();
+                }
+
+                function filterTechAILogs() {
+                    applyTechAIFilters();
+                }
+
+                function applyTechAIFilters() {
+                    const searchVal = (document.getElementById('techAILogSearch')?.value || '').toLowerCase();
+                    const rows = document.querySelectorAll('#techAILogsTable tbody tr');
+                    rows.forEach(row => {
+                        const status = row.getAttribute('data-status') || '';
+                        const flagged = row.getAttribute('data-flagged') || '';
+                        const text = row.textContent.toLowerCase();
+
+                        let statusMatch = false;
+                        if (currentTechAIFilter === 'all') statusMatch = true;
+                        else if (currentTechAIFilter === 'flagged') statusMatch = (flagged === 'flagged');
+                        else statusMatch = (status === currentTechAIFilter);
+
+                        const searchMatch = !searchVal || text.includes(searchVal);
+                        row.style.display = (statusMatch && searchMatch) ? '' : 'none';
+                    });
                 }
             </script>
             
