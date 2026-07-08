@@ -94,8 +94,9 @@ $curl_file = new CURLFile(
 );
 
 $post_data = [
-    'file'    => $curl_file,
-    'user_id' => $userid,
+    'file'        => $curl_file,
+    'user_id'     => $userid,
+    'page_offset' => intval($_POST['page_offset'] ?? 0),
 ];
 
 if ($kb_id > 0) {

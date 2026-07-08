@@ -31,6 +31,14 @@ def extract_text(file_path: str) -> list[dict]:
         raise ValueError(f"Unsupported file type: {ext}")
 
 
+import io
+from PIL import Image
+import pytesseract
+
+# Configure Tesseract path for Windows
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+
 def _extract_pdf(path: Path) -> list[dict]:
     from pypdf import PdfReader
 
@@ -40,14 +48,54 @@ def _extract_pdf(path: Path) -> list[dict]:
     for i, page in enumerate(reader.pages, start=1):
         text = page.extract_text() or ""
         text = text.strip()
+        
+        # Always check and extract text from images if present
+        has_images = False
+        try:
+            has_images = len(page.images) > 0
+        except Exception:
+            pass
+
+        if has_images:
+            logger.info("PDF page %d of '%s' has images. Running OCR...", i, path.name)
+            ocr_texts = []
+            try:
+                for img_idx, img_file in enumerate(page.images):
+                    image_data = img_file.data
+                    img = Image.open(io.BytesIO(image_data))
+                    ocr_res = pytesseract.image_to_string(img)
+                    if ocr_res.strip():
+                        ocr_texts.append(ocr_res.strip())
+                
+                if ocr_texts:
+                    ocr_combined = "\n\n[Extracted Image OCR Text]:\n" + "\n\n".join(ocr_texts)
+                    if text:
+                        text += ocr_combined
+                    else:
+                        text = ocr_combined.strip()
+                    logger.info("Successfully extracted text from page %d images using OCR.", i)
+            except pytesseract.TesseractNotFoundError:
+                # If there's no digital text and OCR failed due to missing Tesseract, we must fail
+                if not text:
+                    msg = (
+                        "Tesseract OCR is not installed or not configured on the server. "
+                        "To support scanned PDFs, please install Tesseract OCR on the server."
+                    )
+                    logger.error(msg)
+                    raise ValueError(msg)
+                else:
+                    logger.warning("Could not perform OCR on page %d images because Tesseract OCR is not installed.", i)
+            except Exception as e:
+                logger.warning("OCR failed on page %d: %s", i, e)
+
         if text:
             pages.append({"page_number": i, "page_text": text})
         else:
-            logger.warning("PDF page %d of '%s' has no extractable text.", i, path.name)
+            logger.warning("PDF page %d of '%s' has no extractable text or images.", i, path.name)
 
     if not pages:
         raise ValueError(f"No text could be extracted from '{path.name}'. "
-                         "It may be a scanned image-only PDF.")
+                         "It may be an empty or scanned image-only PDF without OCR support configured.")
 
     logger.info("Extracted %d page(s) from PDF '%s'.", len(pages), path.name)
     return pages

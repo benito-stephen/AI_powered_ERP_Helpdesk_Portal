@@ -12,6 +12,29 @@ session_start();
 // Include database settings
 include('db.php');
 
+function push_ai_override($conn, $log_id, $override_response, $created_by) {
+    $res = mysqli_query($conn, "SELECT query FROM ai_logs WHERE id = " . intval($log_id));
+    $row = mysqli_fetch_assoc($res);
+    if (!$row) return false;
+    $query = $row['query'];
+
+    $ch = curl_init('http://127.0.0.1:8000/override');
+    $payload = json_encode([
+        'log_id' => intval($log_id),
+        'query' => $query,
+        'override_response' => $override_response,
+        'created_by' => strval($created_by)
+    ]);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    $resp = curl_exec($ch);
+    curl_close($ch);
+    return $resp;
+}
+
 // Redirect unauthorized users to the login screen
 if (!isset($_SESSION['userid']) || $_SESSION['role'] !== 'Hr_admin') {
     header("Location: login.php");
@@ -168,7 +191,8 @@ if (isset($_POST['submit_ai_review'])) {
     $edited_resp = mysqli_real_escape_string($conn, $_POST['edited_response']);
     $notes = mysqli_real_escape_string($conn, $_POST['review_notes']);
     mysqli_query($conn, "UPDATE ai_logs SET edited_response = '$edited_resp', review_notes = '$notes', review_status = 'Edited_by_HR' WHERE id = $log_id");
-    $message = "AI response review submitted to Tech Admin for approval.";
+    push_ai_override($conn, $log_id, $_POST['edited_response'], $userid);
+    $message = "AI response review submitted to Tech Admin for approval. Override embedding stored.";
 }
 
 // 12. Handle POST Request: Delete AI Log Entry
@@ -693,6 +717,7 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
             <li id="tab-employees" onclick="display('employees')">Manage Employees</li>
             <li id="tab-knowledge" onclick="display('knowledge')">Knowledge Base</li>
             <li id="tab-aimgmt" onclick="display('aimgmt')">Manage AI</li>
+            <li id="tab-chathistory" onclick="display('chathistory')">&#128366; Chat History</li>
         </ul>
     </div>
 
@@ -1041,6 +1066,9 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                     <label>Select Document File (.pdf, .docx, .txt)</label>
                     <input type="file" name="document" accept=".pdf,.docx,.txt" required>
                     
+                    <label>Page Offset (Optional: shifts extracted page numbers)</label>
+                    <input type="number" name="page_offset" placeholder="e.g. -2 or 3" value="0">
+                    
                     <button type="submit" name="submit_document" class="btn-primary">Submit Document</button>
                 </form>
 
@@ -1141,27 +1169,29 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                     <button class="ai-filter-tab" onclick="setAIFilter('original', this)">Original</button>
                 </div>
 
-                <table id="aiLogsTable">
+                <div style="overflow-x: auto; width: 100%; margin-bottom: 20px; border: 1px solid #eee; border-radius: 8px;">
+                <table id="aiLogsTable" style="width: 1200px; table-layout: fixed; border-collapse: collapse;">
                     <thead>
                         <tr>
-                            <th>ID</th>
-                            <th>User</th>
-                            <th>Query</th>
-                            <th>AI Response</th>
-                            <th>Accuracy</th>
-                            <th>Hallucination</th>
-                            <th>Review Status</th>
-                            <th>Edited Response</th>
-                            <th>Review Notes</th>
-                            <th>Time</th>
-                            <th>Actions</th>
+                            <th style="width: 50px;">ID</th>
+                            <th style="width: 70px;">User</th>
+                            <th style="width: 150px;">Query</th>
+                            <th style="width: 150px;">AI Response</th>
+                            <th style="width: 80px;">Accuracy</th>
+                            <th style="width: 100px;">Hallucination</th>
+                            <th style="width: 110px;">Review Status</th>
+                            <th style="width: 150px;">Edited Response</th>
+                            <th style="width: 110px;">Review Notes</th>
+                            <th style="width: 80px;">Feedback</th>
+                            <th style="width: 110px;">Time</th>
+                            <th style="width: 110px;">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                     <?php
                     $ai_logs_hr = mysqli_query($conn, "SELECT * FROM ai_logs ORDER BY id DESC");
                     if (mysqli_num_rows($ai_logs_hr) == 0): ?>
-                        <tr><td colspan="11" style="text-align:center; padding:20px; color:#888;">&#128203; No AI queries logged yet. Queries will appear here once employees use the AI chatbot.</td></tr>
+                        <tr><td colspan="12" style="text-align:center; padding:20px; color:#888;">&#128203; No AI queries logged yet. Queries will appear here once employees use the AI chatbot.</td></tr>
                     <?php else:
                         while ($log = mysqli_fetch_assoc($ai_logs_hr)):
                             $is_flagged = ($log['performance_score'] < 80 || $log['hallucination_detected'] == 1);
@@ -1214,6 +1244,10 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                                     <?php echo $log['review_notes'] ? htmlspecialchars($log['review_notes']) : '<span style="color:#aaa;">&#8212;</span>'; ?>
                                 </span>
                             </td>
+                            <td style="text-align:center; white-space:nowrap;">
+                                <span style="color:#27ae60; font-size:13px;">&#128077; <?php echo intval($log['upvotes'] ?? 0); ?></span><br>
+                                <span style="color:#e74c3c; font-size:13px;">&#128078; <?php echo intval($log['downvotes'] ?? 0); ?></span>
+                            </td>
                             <td style="white-space:nowrap; font-size:11px; color:#888;">
                                 <?php echo date('d M y, H:i', strtotime($log['timestamp'])); ?>
                             </td>
@@ -1234,6 +1268,7 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                     <?php endwhile; endif; ?>
                     </tbody>
                 </table>
+                </div>
             </div>
 
             
@@ -1266,6 +1301,38 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                         <button type="submit" name="update_profile" class="btn-primary" style="margin-top: 15px;">Update Profile</button>
                     </form>
                 </div>
+            </div>
+
+            <div id="chathistory" class="section">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <h3>My AI Chat History</h3>
+                    <button onclick="display('overview')" class="btn-primary" style="background:#555;">&larr; Back</button>
+                </div>
+                <p>View your previous conversations with the AI Helpdesk Assistant.</p>
+                <table>
+                    <tr>
+                        <th style="width:15%;">Time</th>
+                        <th style="width:35%;">Your Question</th>
+                        <th style="width:50%;">AI Response</th>
+                    </tr>
+                    <?php
+                    $hist_query = mysqli_query($conn, "SELECT query, response, timestamp FROM ai_logs WHERE userid = '$userid' ORDER BY id DESC");
+                    $hist_query = mysqli_query($conn, "SELECT * FROM ai_logs WHERE userid = '$userid' ORDER BY id DESC");
+                    if (mysqli_num_rows($hist_query) == 0):
+                    ?>
+                        <tr><td colspan="4" style="text-align:center;">No chat history found.</td></tr>
+                    <?php else: while ($h = mysqli_fetch_assoc($hist_query)): ?>
+                        <tr>
+                            <td style="white-space:nowrap; font-size:11px; color:#666;"><?php echo date('d M y, H:i', strtotime($h['timestamp'])); ?></td>
+                            <td style="text-align:center; white-space:nowrap;">
+                                <span style="color:#27ae60; font-size:13px;">👍 <?php echo intval($h['upvotes'] ?? 0); ?></span><br>
+                                <span style="color:#e74c3c; font-size:13px;">👎 <?php echo intval($h['downvotes'] ?? 0); ?></span>
+                            </td>
+                            <td style="font-weight:bold;"><?php echo htmlspecialchars($h['query']); ?></td>
+                            <td style="font-size:13px;"><?php echo nl2br(htmlspecialchars($h['response'])); ?></td>
+                        </tr>
+                    <?php endwhile; endif; ?>
+                </table>
             </div>
 
             <script>
@@ -1523,13 +1590,8 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
             
             fetch('chatbot_backend.php', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    message: message,
-                    page_filter: pageFilter
-                })
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: message, page_filter: pageFilter })
             })
             .then(res => res.json())
             .then(data => {
@@ -1538,8 +1600,32 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                 
                 const aiDiv = document.createElement('div');
                 aiDiv.className = 'message ai';
-                aiDiv.textContent = data.response || (data.error ? "Error: " + data.error : "No response.");
+
+                // Render HTML (for clickable source links)
+                const rawText = data.response || (data.error ? "Error: " + data.error : "No response.");
+                // Convert newlines to <br> and keep <a> tags safe
+                aiDiv.innerHTML = rawText
+                    .replace(/&(?![a-zA-Z#0-9]+;)/g, '&amp;')
+                    .replace(/\n/g, '<br>')
+                    // Restore <a href...> tags that were escaped (the PHP already built them safely)
+                    .replace(/&lt;a href="([^"]*)"([^&]*)&gt;/g, '<a href="$1"$2>')
+                    .replace(/&lt;\/a&gt;/g, '</a>');
+                // Use innerHTML directly since backend already sanitises with htmlspecialchars
+                aiDiv.innerHTML = rawText.replace(/\n/g, '<br>');
+
                 container.appendChild(aiDiv);
+
+                // Add thumbs up / down feedback buttons
+                if (data.ai_log_id) {
+                    const feedbackDiv = document.createElement('div');
+                    feedbackDiv.style.cssText = 'display:flex; gap:8px; margin-top:4px; margin-left:4px;';
+                    feedbackDiv.innerHTML =
+                        `<button onclick="submitFeedback(${data.ai_log_id},'up',this)" title="Helpful" style="background:none;border:none;cursor:pointer;font-size:18px;opacity:0.7;" class="fb-btn">👍</button>` +
+                        `<button onclick="submitFeedback(${data.ai_log_id},'down',this)" title="Not helpful" style="background:none;border:none;cursor:pointer;font-size:18px;opacity:0.7;" class="fb-btn">👎</button>` +
+                        `<span id="fb-msg-${data.ai_log_id}" style="font-size:11px;color:#888;margin-top:3px;"></span>`;
+                    container.appendChild(feedbackDiv);
+                }
+
                 container.scrollTop = container.scrollHeight;
             })
             .catch(err => {
@@ -1556,6 +1642,25 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                 isSending = false;
             });
         }
+
+        function submitFeedback(logId, feedbackVal, btn) {
+            // Disable both buttons in this feedback row
+            const row = btn.parentElement;
+            row.querySelectorAll('.fb-btn').forEach(b => b.disabled = true);
+
+            fetch('feedback.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ log_id: logId, feedback: feedbackVal })
+            })
+            .then(r => r.json())
+            .then(d => {
+                const msg = document.getElementById('fb-msg-' + logId);
+                if (msg) msg.textContent = feedbackVal === 'up' ? '✓ Thanks for your feedback!' : '✓ Noted, we\'ll improve.';
+            })
+            .catch(() => {});
+        }
+
 
         // RAG Status Polling
         document.addEventListener('DOMContentLoaded', () => {

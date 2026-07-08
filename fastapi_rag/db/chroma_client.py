@@ -42,6 +42,18 @@ def get_collection() -> chromadb.Collection:
     return collection
 
 
+def get_override_collection() -> chromadb.Collection:
+    """
+    Get or create the dedicated HR-override collection (cosine distance).
+    Each entry is one approved HR override response, keyed by override_id.
+    """
+    client = get_client()
+    return client.get_or_create_collection(
+        name="hr_overrides",
+        metadata={"hnsw:space": "cosine"},
+    )
+
+
 def upsert_embeddings(chunk_embeddings: list[dict]):
     """
     Store embeddings into ChromaDB.
@@ -123,3 +135,63 @@ def similarity_search(query_embedding: list, top_k: int = 5) -> list[dict]:
         })
 
     return hits
+
+
+# ── HR Override Collection helpers ───────────────────────────────────────────
+
+def upsert_override(override_id: str, embedding: list, log_id: int):
+    """
+    Store a single HR override embedding into the hr_overrides collection.
+    """
+    col = get_override_collection()
+    col.upsert(
+        ids=[override_id],
+        embeddings=[embedding],
+        metadatas=[{"log_id": str(log_id)}],
+    )
+    logger.info("Upserted HR override '%s' into ChromaDB.", override_id)
+
+
+def similarity_search_overrides(query_embedding: list, top_k: int = 1) -> list[dict]:
+    """
+    Search the hr_overrides collection for matching responses.
+
+    Returns:
+        List of {override_id, log_id, score}
+    """
+    col = get_override_collection()
+    if col.count() == 0:
+        return []
+
+    results = col.query(
+        query_embeddings=[query_embedding],
+        n_results=min(top_k, col.count()),
+        include=["metadatas", "distances"],
+    )
+
+    hits = []
+    for oid, dist, meta in zip(results["ids"][0], results["distances"][0], results["metadatas"][0]):
+        hits.append({
+            "override_id": oid,
+            "log_id"     : int(meta.get("log_id", 0)),
+            "score"      : round(1.0 - dist, 4),
+        })
+    return hits
+
+
+def delete_override(override_id: str):
+    """Remove one HR override embedding from ChromaDB."""
+    col = get_override_collection()
+    try:
+        col.delete(ids=[override_id])
+        logger.info("Deleted HR override '%s' from ChromaDB.", override_id)
+    except Exception as exc:
+        logger.warning("Failed to delete override '%s': %s", override_id, exc)
+
+
+def delete_document_chunks(document_id: str) -> int:
+    """
+    Remove all embeddings for a given document_id from the main ChromaDB collection.
+    Returns number of deleted entries.
+    """
+    return delete_document_embeddings(document_id)

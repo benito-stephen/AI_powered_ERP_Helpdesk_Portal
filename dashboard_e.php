@@ -541,6 +541,7 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
             <li id="tab-attendance" onclick="display('attendance')">Attendance</li>
             <li id="tab-leaves" onclick="display('leaves')">Leave Management</li>
             <li id="tab-policies" onclick="display('policies')">Policies</li>
+            <li id="tab-chathistory" onclick="display('chathistory')">&#128366; Chat History</li>
         </ul>
     </div>
 
@@ -767,6 +768,33 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                 </div>
             </div>
 
+            <div id="chathistory" class="section">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <h3>My AI Chat History</h3>
+                    <button onclick="display('overview')" class="btn-primary" style="background:#555;">&larr; Back</button>
+                </div>
+                <p>View your previous conversations with the AI Helpdesk Assistant.</p>
+                <table>
+                    <tr>
+                        <th style="width:15%;">Time</th>
+                        <th style="width:35%;">Your Question</th>
+                        <th style="width:50%;">AI Response</th>
+                    </tr>
+                    <?php
+                    $hist_query = mysqli_query($conn, "SELECT query, response, timestamp FROM ai_logs WHERE userid = '$userid' ORDER BY id DESC");
+                    if (mysqli_num_rows($hist_query) == 0):
+                    ?>
+                        <tr><td colspan="3" style="text-align:center;">No chat history found.</td></tr>
+                    <?php else: while ($h = mysqli_fetch_assoc($hist_query)): ?>
+                        <tr>
+                            <td style="font-size:12px; color:#666;"><?php echo date('d M y, H:i', strtotime($h['timestamp'])); ?></td>
+                            <td style="font-weight:bold;"><?php echo htmlspecialchars($h['query']); ?></td>
+                            <td style="font-size:13px;"><?php echo nl2br(htmlspecialchars($h['response'])); ?></td>
+                        </tr>
+                    <?php endwhile; endif; ?>
+                </table>
+            </div>
+
             <script>
                 // Switches between different sidebar navigation modules and highlights the active menu item
                 function display(sectionId) {
@@ -906,13 +934,8 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
             
             fetch('chatbot_backend.php', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    message: message,
-                    page_filter: pageFilter
-                })
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: message, page_filter: pageFilter })
             })
             .then(res => res.json())
             .then(data => {
@@ -921,8 +944,23 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                 
                 const aiDiv = document.createElement('div');
                 aiDiv.className = 'message ai';
-                aiDiv.textContent = data.response || (data.error ? "Error: " + data.error : "No response.");
+
+                // Render HTML (for clickable source links)
+                const rawText = data.response || (data.error ? "Error: " + data.error : "No response.");
+                aiDiv.innerHTML = rawText.replace(/\n/g, '<br>');
                 container.appendChild(aiDiv);
+
+                // Add thumbs up / down feedback buttons
+                if (data.ai_log_id) {
+                    const feedbackDiv = document.createElement('div');
+                    feedbackDiv.style.cssText = 'display:flex; gap:8px; margin-top:4px; margin-left:4px;';
+                    feedbackDiv.innerHTML =
+                        `<button onclick="submitFeedback(${data.ai_log_id},'up',this)" title="Helpful" style="background:none;border:none;cursor:pointer;font-size:18px;opacity:0.7;" class="fb-btn">👍</button>` +
+                        `<button onclick="submitFeedback(${data.ai_log_id},'down',this)" title="Not helpful" style="background:none;border:none;cursor:pointer;font-size:18px;opacity:0.7;" class="fb-btn">👎</button>` +
+                        `<span id="fb-msg-${data.ai_log_id}" style="font-size:11px;color:#888;margin-top:3px;"></span>`;
+                    container.appendChild(feedbackDiv);
+                }
+
                 container.scrollTop = container.scrollHeight;
             })
             .catch(err => {
@@ -938,6 +976,24 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
             .finally(() => {
                 isSending = false;
             });
+        }
+
+        function submitFeedback(logId, feedbackVal, btn) {
+            // Disable both buttons in this feedback row
+            const row = btn.parentElement;
+            row.querySelectorAll('.fb-btn').forEach(b => b.disabled = true);
+
+            fetch('feedback.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ log_id: logId, feedback: feedbackVal })
+            })
+            .then(r => r.json())
+            .then(d => {
+                const msg = document.getElementById('fb-msg-' + logId);
+                if (msg) msg.textContent = feedbackVal === 'up' ? '✓ Thanks for your feedback!' : '✓ Noted, we\'ll improve.';
+            })
+            .catch(() => {});
         }
     </script>
 

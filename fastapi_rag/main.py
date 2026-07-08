@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from routers import upload, process, chat, status
+from routers import upload, process, chat, status, override
 from settings import get_settings
 
 logging.basicConfig(
@@ -56,10 +56,12 @@ async def lifespan(app: FastAPI):
 
     # Pre-warm ChromaDB collection
     try:
-        from db.chroma_client import get_collection
+        from db.chroma_client import get_collection, get_override_collection
         col = get_collection()
         logger.info("ChromaDB collection '%s' ready. Vectors stored: %d",
                     cfg.chroma_collection, col.count())
+        ov_col = get_override_collection()
+        logger.info("ChromaDB override collection 'hr_overrides' ready. Entries: %d", ov_col.count())
     except Exception as exc:
         logger.error("ChromaDB init failed: %s", exc)
 
@@ -86,10 +88,11 @@ app.add_middleware(
     allow_headers = ["*"],
 )
 
-app.include_router(upload.router,  tags=["Upload"])
-app.include_router(process.router, tags=["Process"])
-app.include_router(chat.router,    tags=["Chat"])
-app.include_router(status.router,  tags=["Status"])
+app.include_router(upload.router,   tags=["Upload"])
+app.include_router(process.router,  tags=["Process"])
+app.include_router(chat.router,     tags=["Chat"])
+app.include_router(status.router,   tags=["Status"])
+app.include_router(override.router, tags=["Override"])
 
 
 @app.get("/health", tags=["Health"])

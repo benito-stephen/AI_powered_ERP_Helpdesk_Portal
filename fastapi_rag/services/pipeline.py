@@ -42,6 +42,13 @@ def run_pipeline(document_id: str, file_path: str, filename: str):
         from services.extractor import extract_text
         pages = extract_text(file_path)
 
+        # Fetch page_offset
+        offset_row = execute_query("SELECT page_offset FROM rag_documents WHERE document_id=%s LIMIT 1", (document_id,), fetch=True)
+        page_offset = offset_row[0]["page_offset"] if offset_row else 0
+
+        for p in pages:
+            p["page_number"] += page_offset
+
         ins_sql = """
             INSERT INTO rag_extracted_text
                 (document_id, page_number, page_text, char_count)

@@ -41,7 +41,7 @@ def _build_prompt(question: str, context: str) -> str:
         "You are an ERP Helpdesk Assistant. "
         "Answer ONLY using the provided context below. "
         "If the answer is not in the context, say: "
-        "'I couldn't find this information in the uploaded ERP documents.'\n\n"
+        "'Please refer to the sources below for more information.'\n\n"
         "CONTEXT:\n"
         f"{context}\n\n"
         "QUESTION:\n"
@@ -117,15 +117,17 @@ def call_gemini_rag(question: str, chunks: list[dict]) -> dict:
             "sources": [],
         }
 
-    # Build deduplicated source citations (filename + page, unique pairs)
+    # Build deduplicated source citations (filename + page + score, unique pairs)
     seen  = set()
     sources = []
     for chunk in chunks:
         key = (chunk["filename"], chunk["page_number"])
         if key not in seen:
             seen.add(key)
-            sources.append(
-                {"filename": chunk["filename"], "page": chunk["page_number"]}
-            )
+            sources.append({
+                "filename": chunk["filename"],
+                "page": chunk["page_number"],
+                "score": chunk.get("score", 0.0)
+            })
 
     return {"answer": answer.strip(), "sources": sources}

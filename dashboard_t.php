@@ -12,6 +12,29 @@ session_start();
 // Include database connection settings
 include('db.php');
 
+function push_ai_override($conn, $log_id, $override_response, $created_by) {
+    $res = mysqli_query($conn, "SELECT query FROM ai_logs WHERE id = " . intval($log_id));
+    $row = mysqli_fetch_assoc($res);
+    if (!$row) return false;
+    $query = $row['query'];
+
+    $ch = curl_init('http://127.0.0.1:8000/override');
+    $payload = json_encode([
+        'log_id' => intval($log_id),
+        'query' => $query,
+        'override_response' => $override_response,
+        'created_by' => strval($created_by)
+    ]);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    $resp = curl_exec($ch);
+    curl_close($ch);
+    return $resp;
+}
+
 // Redirect unauthorized users to the login screen
 if (!isset($_SESSION['userid']) || $_SESSION['role'] !== 'Technical_admin') {
     header("Location: login.php");
@@ -182,12 +205,26 @@ if (isset($_POST['edit_document'])) {
 if (isset($_POST['approve_ai_review'])) {
     $log_id = intval($_POST['log_id']);
     mysqli_query($conn, "UPDATE ai_logs SET review_status = 'Approved_by_Tech' WHERE id = $log_id");
-    $message = "AI response review #$log_id approved. The corrected response is now the canonical answer.";
+    
+    // Auto-push the HR edited response as embedding
+    $log_res = mysqli_query($conn, "SELECT edited_response FROM ai_logs WHERE id = $log_id");
+    $log_row = mysqli_fetch_assoc($log_res);
+    if ($log_row && !empty($log_row['edited_response'])) {
+        push_ai_override($conn, $log_id, $log_row['edited_response'], $userid);
+    }
+    
+    $message = "AI response review #$log_id approved and override embedding stored.";
 }
 
 // 10. Handle POST Request: Reject HR-Edited AI Response Review and revert to Original status
 if (isset($_POST['reject_ai_review'])) {
     $log_id = intval($_POST['log_id']);
+    // Clean up old override if any
+    $ex_res = mysqli_query($conn, "SELECT override_id FROM erp_portal.ai_overrides WHERE log_id = $log_id");
+    $ex_row = mysqli_fetch_assoc($ex_res);
+    if ($ex_row) {
+        // call delete endpoint or ignore (FastAPI override cleaning handles updates)
+    }
     mysqli_query($conn, "UPDATE ai_logs SET review_status = 'Original', edited_response = NULL, review_notes = NULL WHERE id = $log_id");
     $message = "AI response review #$log_id rejected. Reverted to Original status.";
 }
@@ -198,7 +235,11 @@ if (isset($_POST['submit_tech_ai_edit'])) {
     $edited_resp = mysqli_real_escape_string($conn, $_POST['edited_response']);
     $notes = mysqli_real_escape_string($conn, $_POST['review_notes']);
     mysqli_query($conn, "UPDATE ai_logs SET edited_response = '$edited_resp', review_notes = '$notes', review_status = 'Approved_by_Tech' WHERE id = $log_id");
-    $message = "AI response #$log_id directly updated and approved by Tech Admin.";
+    
+    // Auto-push direct edit as override embedding
+    push_ai_override($conn, $log_id, $_POST['edited_response'], $userid);
+    
+    $message = "AI response #$log_id directly updated, approved, and override embedding stored.";
 }
 
 // 12. Handle POST Request: Delete AI Log Entry (Tech Admin)
@@ -711,6 +752,7 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
             <li id="tab-aimgmt" onclick="display('aimgmt')">AI Performance & Logs</li>
             <li id="tab-knowledge" onclick="display('knowledge')">Knowledge Base Tuning</li>
             <li id="tab-aireview" onclick="display('aireview')">Manage AI Reviews</li>
+            <li id="tab-chathistory" onclick="display('chathistory')">&#128366; Chat History</li>
         </ul>
     </div>
 
@@ -1105,27 +1147,29 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                     <button class="ai-filter-tab" onclick="setTechAIFilter('flagged', this)">&#128680; Hallucinations (<?php echo $t_halluc; ?>)</button>
                 </div>
 
-                <table id="techAILogsTable">
+                <div style="overflow-x: auto; width: 100%; margin-bottom: 20px; border: 1px solid #eee; border-radius: 8px;">
+                <table id="techAILogsTable" style="width: 1200px; table-layout: fixed; border-collapse: collapse;">
                     <thead>
                         <tr>
-                            <th>ID</th>
-                            <th>User</th>
-                            <th>Query</th>
-                            <th>Original AI Response</th>
-                            <th>HR Edited Response</th>
-                            <th>Review Notes</th>
-                            <th>Accuracy</th>
-                            <th>Hallucination</th>
-                            <th>Status</th>
-                            <th>Time</th>
-                            <th>Actions</th>
+                            <th style="width: 50px;">ID</th>
+                            <th style="width: 70px;">User</th>
+                            <th style="width: 150px;">Query</th>
+                            <th style="width: 150px;">Original AI Response</th>
+                            <th style="width: 150px;">HR Edited Response</th>
+                            <th style="width: 110px;">Review Notes</th>
+                            <th style="width: 80px;">Accuracy</th>
+                            <th style="width: 100px;">Hallucination</th>
+                            <th style="width: 110px;">Status</th>
+                            <th style="width: 80px;">Feedback</th>
+                            <th style="width: 110px;">Time</th>
+                            <th style="width: 110px;">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                     <?php
                     $all_reviews = mysqli_query($conn, "SELECT * FROM ai_logs ORDER BY id DESC");
                     if (mysqli_num_rows($all_reviews) == 0): ?>
-                        <tr><td colspan="11" style="text-align:center; padding:20px; color:#888;">&#128203; No AI queries logged yet.</td></tr>
+                        <tr><td colspan="12" style="text-align:center; padding:20px; color:#888;">&#128203; No AI queries logged yet.</td></tr>
                     <?php else:
                         while ($log = mysqli_fetch_assoc($all_reviews)):
                             $status = $log['review_status'];
@@ -1177,6 +1221,10 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                                     <?php echo htmlspecialchars($status); ?>
                                 </span>
                             </td>
+                            <td style="text-align:center; white-space:nowrap;">
+                                <span style="color:#27ae60; font-size:13px;">&#128077; <?php echo intval($log['upvotes'] ?? 0); ?></span><br>
+                                <span style="color:#e74c3c; font-size:13px;">&#128078; <?php echo intval($log['downvotes'] ?? 0); ?></span>
+                            </td>
                             <td style="white-space:nowrap; font-size:11px; color:#888;">
                                 <?php echo date('d M y, H:i', strtotime($log['timestamp'])); ?>
                             </td>
@@ -1192,6 +1240,9 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                                             <button type="submit" name="reject_ai_review" class="btn-reject" style="font-size:11px; padding:4px 8px; width:100%;">&#10007; Reject</button>
                                         </form>
                                     <?php endif; ?>
+                                    <?php if ($status === 'Approved_by_Tech' && $log['edited_response']): ?>
+                                        <button class="btn-primary" style="padding:4px 8px; font-size:11px; width:100%; background:#8e44ad;" onclick="pushToOverride(<?php echo $log['id']; ?>, <?php echo json_encode($log['query']); ?>, <?php echo json_encode($log['edited_response']); ?>)">&#129504; Push Override</button>
+                                    <?php endif; ?>
                                     <button class="btn-primary" style="padding:4px 8px; font-size:11px; width:100%;" onclick='openTechAIEditModal(<?php echo json_encode($log); ?>)'>&#9999; Direct Edit</button>
                                     <form method="POST" style="margin:0;" onsubmit="return confirm('Permanently delete AI log #<?php echo $log['id']; ?>?');">
                                         <input type="hidden" name="log_id" value="<?php echo $log['id']; ?>">
@@ -1203,6 +1254,7 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                     <?php endwhile; endif; ?>
                     </tbody>
                 </table>
+                </div>
             </div>
 
             
@@ -1235,6 +1287,33 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                         <button type="submit" name="update_profile" class="btn-primary" style="margin-top: 15px;">Update Profile</button>
                     </form>
                 </div>
+            </div>
+
+            <div id="chathistory" class="section">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <h3>My AI Chat History</h3>
+                    <button onclick="display('overview')" class="btn-primary" style="background:#555;">&larr; Back</button>
+                </div>
+                <p>View your previous conversations with the AI Helpdesk Assistant.</p>
+                <table>
+                    <tr>
+                        <th style="width:15%;">Time</th>
+                        <th style="width:35%;">Your Question</th>
+                        <th style="width:50%;">AI Response</th>
+                    </tr>
+                    <?php
+                    $hist_query = mysqli_query($conn, "SELECT query, response, timestamp FROM ai_logs WHERE userid = '$userid' ORDER BY id DESC");
+                    if (mysqli_num_rows($hist_query) == 0):
+                    ?>
+                        <tr><td colspan="3" style="text-align:center;">No chat history found.</td></tr>
+                    <?php else: while ($h = mysqli_fetch_assoc($hist_query)): ?>
+                        <tr>
+                            <td style="font-size:12px; color:#666;"><?php echo date('d M y, H:i', strtotime($h['timestamp'])); ?></td>
+                            <td style="font-weight:bold;"><?php echo htmlspecialchars($h['query']); ?></td>
+                            <td style="font-size:13px;"><?php echo nl2br(htmlspecialchars($h['response'])); ?></td>
+                        </tr>
+                    <?php endwhile; endif; ?>
+                </table>
             </div>
 
             <script>
@@ -1273,6 +1352,43 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                 }
                 function closeEditModal() {
                     document.getElementById('editModal').style.display = 'none';
+                }
+
+                function pushToOverride(logId, query, overrideResponse) {
+                    if (!confirm('Push this approved response as an HR Override? It will be used as a high-priority answer for similar future questions.')) return;
+                    
+                    const btn = event.target;
+                    btn.disabled = true;
+                    btn.textContent = '⏳ Pushing...';
+
+                    fetch('http://127.0.0.1:8000/override', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            log_id: logId,
+                            query: query,
+                            override_response: overrideResponse,
+                            created_by: '<?php echo addslashes($userid); ?>'
+                        })
+                    })
+                    .then(r => r.json())
+                    .then(d => {
+                        if (d.status === 'success') {
+                            btn.textContent = '✓ Pushed!';
+                            btn.style.background = '#27ae60';
+                        } else {
+                            btn.textContent = '✗ Failed';
+                            btn.style.background = '#e74c3c';
+                            btn.disabled = false;
+                            alert('Override push failed: ' + (d.detail || 'Unknown error'));
+                        }
+                    })
+                    .catch(() => {
+                        btn.textContent = '✗ Error';
+                        btn.style.background = '#e74c3c';
+                        btn.disabled = false;
+                        alert('Could not connect to RAG service. Make sure it is running.');
+                    });
                 }
 
                 function openTechAIEditModal(log) {
@@ -1448,7 +1564,6 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
             const pageFilter = document.getElementById('pageFilterSelect').value;
             const container = document.getElementById('chatContainer');
             
-            // Append user message
             const userDiv = document.createElement('div');
             userDiv.className = 'message user';
             userDiv.textContent = message;
@@ -1457,7 +1572,6 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
             
             input.value = '';
             
-            // Append typing indicator
             const typingIndicator = document.createElement('div');
             typingIndicator.className = 'message ai';
             typingIndicator.style.fontStyle = 'italic';
@@ -1470,13 +1584,8 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
             
             fetch('chatbot_backend.php', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    message: message,
-                    page_filter: pageFilter
-                })
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: message, page_filter: pageFilter })
             })
             .then(res => res.json())
             .then(data => {
@@ -1485,8 +1594,19 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                 
                 const aiDiv = document.createElement('div');
                 aiDiv.className = 'message ai';
-                aiDiv.textContent = data.response || (data.error ? "Error: " + data.error : "No response.");
+                aiDiv.innerHTML = (data.response || (data.error ? 'Error: ' + data.error : 'No response.')).replace(/\n/g, '<br>');
                 container.appendChild(aiDiv);
+
+                if (data.ai_log_id) {
+                    const feedbackDiv = document.createElement('div');
+                    feedbackDiv.style.cssText = 'display:flex; gap:8px; margin-top:4px; margin-left:4px;';
+                    feedbackDiv.innerHTML =
+                        `<button onclick="submitFeedback(${data.ai_log_id},'up',this)" title="Helpful" style="background:none;border:none;cursor:pointer;font-size:18px;opacity:0.7;" class="fb-btn">👍</button>` +
+                        `<button onclick="submitFeedback(${data.ai_log_id},'down',this)" title="Not helpful" style="background:none;border:none;cursor:pointer;font-size:18px;opacity:0.7;" class="fb-btn">👎</button>` +
+                        `<span id="fb-msg-${data.ai_log_id}" style="font-size:11px;color:#888;margin-top:3px;"></span>`;
+                    container.appendChild(feedbackDiv);
+                }
+
                 container.scrollTop = container.scrollHeight;
             })
             .catch(err => {
@@ -1499,9 +1619,23 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                 container.appendChild(aiDiv);
                 container.scrollTop = container.scrollHeight;
             })
-            .finally(() => {
-                isSending = false;
-            });
+            .finally(() => { isSending = false; });
+        }
+
+        function submitFeedback(logId, feedbackVal, btn) {
+            const row = btn.parentElement;
+            row.querySelectorAll('.fb-btn').forEach(b => b.disabled = true);
+            fetch('feedback.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ log_id: logId, feedback: feedbackVal })
+            })
+            .then(r => r.json())
+            .then(d => {
+                const msg = document.getElementById('fb-msg-' + logId);
+                if (msg) msg.textContent = feedbackVal === 'up' ? '✓ Thanks!' : '✓ Noted.';
+            })
+            .catch(() => {});
         }
 
         // RAG Status Polling

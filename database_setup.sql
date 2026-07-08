@@ -79,8 +79,34 @@ CREATE TABLE IF NOT EXISTS `ai_logs` (
   `performance_score` FLOAT DEFAULT 95.0, -- AI output quality metric (percentage)
   `hallucination_detected` TINYINT DEFAULT 0, -- Binary flag indicating if AI hallucinated (0 = No, 1 = Yes)
   `deviation_score` FLOAT DEFAULT 2.0, -- Deviation score relative to expected response (percentage)
+  `upvotes` INT DEFAULT 0,   -- Thumbs-up feedback count (denormalised)
+  `downvotes` INT DEFAULT 0, -- Thumbs-down feedback count (denormalised)
   `timestamp` DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`userid`) REFERENCES `users` (`userid`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 6b. AI Feedback Table
+-- Stores individual thumbs-up/down votes by users for each AI response
+CREATE TABLE IF NOT EXISTS `ai_feedback` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `log_id` INT NOT NULL,
+  `userid` VARCHAR(50) NOT NULL,
+  `feedback` ENUM('up', 'down') NOT NULL,
+  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_feedback (log_id, userid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 6c. AI Overrides Table
+-- Stores HR-approved corrected responses that are embedded in ChromaDB for override retrieval
+CREATE TABLE IF NOT EXISTS `ai_overrides` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `log_id` INT NOT NULL,                         -- Reference to the ai_logs entry that was overridden
+  `query` TEXT NOT NULL,                          -- Original query this override answers
+  `override_response` TEXT NOT NULL,             -- Corrected response approved by Tech Admin
+  `override_id` VARCHAR(36) NOT NULL UNIQUE,     -- UUID used as ChromaDB document ID in hr_overrides collection
+  `created_by` VARCHAR(50) NOT NULL,             -- Tech Admin userid who pushed the override
+  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_override_id (override_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 7. Knowledge Base Table

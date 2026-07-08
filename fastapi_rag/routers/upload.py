@@ -32,20 +32,13 @@ ALLOWED_MIME_TYPES = {
 
 @router.post("/upload")
 async def upload_document(
-    file    : UploadFile = File(...),
-    user_id : str        = Form(...),
-    kb_id   : int        = Form(None),   # erp_portal.knowledge_base.id (optional)
+    file        : UploadFile = File(...),
+    user_id     : str        = Form(...),
+    kb_id       : int        = Form(None),
+    page_offset : int        = Form(0),
 ):
     """
     Receive and store an uploaded ERP document.
-
-    Returns:
-        {
-          "status"      : "success",
-          "document_id" : "<UUID>",
-          "filename"    : "<stored filename>",
-          "message"     : "..."
-        }
     """
     cfg = get_settings()
 
@@ -63,7 +56,6 @@ async def upload_document(
             detail=f"Unsupported file type '{extension}'. Allowed: .pdf, .docx, .txt",
         )
 
-    # Read content into memory to check size
     content = await file.read()
     file_size = len(content)
     max_bytes = cfg.max_file_size_mb * 1024 * 1024
@@ -78,18 +70,38 @@ async def upload_document(
                    f"Maximum allowed: {cfg.max_file_size_mb} MB.",
         )
 
-    # ── Check for duplicate filename ──────────────────────────────────────────
+    # ── Document Versioning (Replace existing) ────────────────────────────────
     existing = execute_query(
-        "SELECT document_id FROM rag_documents WHERE original_filename = %s LIMIT 1",
+        "SELECT document_id, storage_path FROM rag_documents WHERE original_filename = %s LIMIT 1",
         (original_filename,),
         fetch=True,
     )
     if existing:
-        raise HTTPException(
-            status_code=409,
-            detail=f"A document named '{original_filename}' already exists. "
-                   "Please rename the file or delete the existing one first.",
-        )
+        old_doc_id = existing[0]["document_id"]
+        old_path = existing[0]["storage_path"]
+        logger.info(f"Duplicate found for {original_filename}. Deleting old version {old_doc_id}...")
+        
+        # Delete from ChromaDB
+        try:
+            from db.chroma_client import delete_document_chunks
+            delete_document_chunks(old_doc_id)
+        except Exception as e:
+            logger.warning(f"Failed to delete from ChromaDB for {old_doc_id}: {e}")
+        
+        # Delete from MySQL
+        execute_query("DELETE FROM rag_extracted_text WHERE document_id = %s", (old_doc_id,))
+        execute_query("DELETE FROM rag_chunks WHERE document_id = %s", (old_doc_id,))
+        execute_query("DELETE FROM rag_embeddings WHERE document_id = %s", (old_doc_id,))
+        execute_query("DELETE FROM rag_processing_log WHERE document_id = %s", (old_doc_id,))
+        execute_query("DELETE FROM rag_documents WHERE document_id = %s", (old_doc_id,))
+        
+        # Delete physical file
+        try:
+            old_file = Path(old_path)
+            if old_file.exists():
+                old_file.unlink()
+        except Exception as e:
+            logger.warning(f"Failed to delete old physical file {old_path}: {e}")
 
     # ── Generate UUID and store file ──────────────────────────────────────────
     document_id = str(uuid.uuid4())
@@ -106,7 +118,6 @@ async def upload_document(
         original_filename, stored_filename, file_size / 1024,
     )
 
-    # ── Detect document type ──────────────────────────────────────────────────
     doc_type_map = {".pdf": "pdf", ".docx": "docx", ".txt": "txt"}
     doc_type = doc_type_map.get(extension, "unknown")
 
@@ -115,8 +126,8 @@ async def upload_document(
         INSERT INTO rag_documents
             (document_id, kb_id, filename, original_filename, file_extension,
              file_size_bytes, storage_path, document_type, uploaded_by,
-             processing_status)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'uploaded')
+             processing_status, page_offset)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'uploaded', %s)
     """
     execute_query(sql, (
         document_id,
@@ -128,6 +139,7 @@ async def upload_document(
         str(file_path.resolve()),
         doc_type,
         user_id,
+        page_offset,
     ))
 
     # ── Log the upload stage ──────────────────────────────────────────────────

@@ -266,19 +266,32 @@ if ($use_rag) {
         $use_rag = false; // fall through to Phase I below
     } else {
 
-        $rag_data = json_decode($rag_raw, true);
-        $rag_answer = $rag_data['answer'] ?? "I couldn't find an answer in the uploaded documents.";
-        $rag_sources = $rag_data['sources'] ?? [];
+        $rag_data    = json_decode($rag_raw, true);
+        $rag_answer  = $rag_data['answer']      ?? "I couldn't find an answer in the uploaded documents.";
+        $source_type = $rag_data['source_type'] ?? 'none';
+        $source      = $rag_data['source']      ?? null;
 
-        // Append source citations to the answer
-        if (!empty($rag_sources)) {
-            $rag_answer .= "\n\n📄 Sources:";
-            foreach ($rag_sources as $src) {
-                $rag_answer .= "\n• {$src['filename']} (Page {$src['page']})";
+        // Build single source citation as a hyperlink
+        $source_html = '';
+        if ($source_type === 'document' && $source) {
+            $physical_page = intval($source['physical_page'] ?? $source['page'] ?? 1);
+            $doc_url  = 'view_document.php?rag_id=' . urlencode($source['document_id'] ?? '') . '#page=' . $physical_page;
+            $score_str = '';
+            if ($user['role'] === 'Technical_admin' && isset($source['score'])) {
+                $score_str = ' [Score: ' . round($source['score'], 2) . ']';
             }
+            $source_html = "\n\n📄 Source: <a href=\"$doc_url\" target=\"_blank\">" . htmlspecialchars($source['filename'] ?? 'Document') . " (Page " . intval($source['page'] ?? 1) . ")</a>" . $score_str;
+        } elseif ($source_type === 'override') {
+            $score_str = '';
+            if ($user['role'] === 'Technical_admin' && isset($source['score'])) {
+                $score_str = ' [Score: ' . round($source['score'], 2) . ']';
+            }
+            $source_html = "\n\n📋 Source: HR Override" . $score_str;
         }
 
-        /* ── Save chat history ─────────────────────────────────── */
+        $rag_answer_display = $rag_answer . $source_html;
+
+        /* ── Save chat history and AI logs ──────────────────────── */
         $stmt = mysqli_prepare($conn,
             "INSERT INTO chat_memory (userid, sender, message)
              VALUES (?, 'user', ?)");
@@ -289,12 +302,25 @@ if ($use_rag) {
         $stmt = mysqli_prepare($conn,
             "INSERT INTO chat_memory (userid, sender, message)
              VALUES (?, 'ai', ?)");
-        mysqli_stmt_bind_param($stmt, "ss", $userid, $rag_answer);
+        mysqli_stmt_bind_param($stmt, "ss", $userid, $rag_answer_display);
         mysqli_stmt_execute($stmt);
         mysqli_stmt_close($stmt);
 
+        // Save to AI logs and capture the new log ID for feedback
+        $stmt = mysqli_prepare($conn,
+            "INSERT INTO ai_logs (userid, query, response)
+             VALUES (?, ?, ?)");
+        mysqli_stmt_bind_param($stmt, "sss", $userid, $userMessage, $rag_answer_display);
+        mysqli_stmt_execute($stmt);
+        $ai_log_id = mysqli_stmt_insert_id($stmt);
+        mysqli_stmt_close($stmt);
+
         mysqli_close($conn);
-        echo json_encode(['response' => $rag_answer]);
+        echo json_encode([
+            'response'   => $rag_answer_display,
+            'ai_log_id'  => $ai_log_id,
+            'source_type'=> $source_type,
+        ]);
         exit();
     }
 }
@@ -458,7 +484,7 @@ $data['candidates'][0]['content']['parts'][0]['text']
 ?? "Unable to generate response.";
 
 /* -------------------------------
-   SAVE CHAT HISTORY
+   SAVE CHAT HISTORY & AI LOGS
 --------------------------------*/
 
 $stmt = mysqli_prepare($conn,
@@ -491,12 +517,22 @@ mysqli_stmt_bind_param(
 mysqli_stmt_execute($stmt);
 mysqli_stmt_close($stmt);
 
+// Save to AI logs for dashboard review
+$stmt = mysqli_prepare($conn,
+    "INSERT INTO ai_logs (userid, query, response)
+     VALUES (?, ?, ?)");
+mysqli_stmt_bind_param($stmt, "sss", $userid, $userMessage, $aiResponse);
+mysqli_stmt_execute($stmt);
+$ai_log_id_phase1 = mysqli_stmt_insert_id($stmt);
+mysqli_stmt_close($stmt);
+
 /* -------------------------------
    RETURN RESPONSE
 --------------------------------*/
 
 echo json_encode([
-    'response' => $aiResponse
+    'response'  => $aiResponse,
+    'ai_log_id' => $ai_log_id_phase1,
 ]);
 
 mysqli_close($conn);
