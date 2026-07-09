@@ -52,3 +52,4 @@
 2026-07-09 16:43:21  INFO      rag_service – RAG service READY on http://127.0.0.1:8000
 2026-07-09 16:43:21  INFO      rag_service – Docs: http://127.0.0.1:8000/docs
 2026-07-09 16:43:21  INFO      rag_service – ============================================================
+2026-07-09 17:06:09  INFO      rag_service – RAG service shutting down.

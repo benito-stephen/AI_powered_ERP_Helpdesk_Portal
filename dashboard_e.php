@@ -845,15 +845,8 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
         
         <div style="padding: 10px 15px; background: #f3f0f7; border-bottom: 1px solid #e1dbe9; display:flex; align-items:center; gap:8px;">
             <label style="font-size:12px; font-weight:600; color:#5f2397; white-space:nowrap;">&#128269; Answer Scope:</label>
-            <select id="pageFilterSelect" style="flex:1; padding:5px 8px; border:1px solid #ccc; border-radius:4px; font-size:12px; background:white; color:#333;" onchange="onFilterChange()">
-                <option value="General">&#127759; General (All Topics)</option>
-                <option value="Dashboard">&#128200; Dashboard</option>
-                <option value="Attendance">&#128337; Attendance</option>
-                <option value="Leave Management">&#128197; Leave Management</option>
-                <option value="Policies">&#128218; Policies</option>
-            </select>
+            <div style="flex:1; padding:5px 8px; font-size:12px; color:#333;">General (All Topics)</div>
         </div>
-        <div id="filterBadge" style="display:none; background:#eaf0fb; color:#2c5f9e; font-size:11px; font-weight:bold; padding:5px 15px; border-bottom:1px solid #d0ddf7;">&#128274; Filtered: <span id="filterBadgeText"></span> — AI will only answer within this scope.</div>
         <div class="chat-container" id="chatContainer">
             
         </div>
@@ -874,18 +867,7 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
             }
         }
 
-        // Toggles a visual banner indicator when an active subpage filter scope is selected in dropdown
-        function onFilterChange() {
-            const select = document.getElementById('pageFilterSelect');
-            const badge = document.getElementById('filterBadge');
-            const badgeText = document.getElementById('filterBadgeText');
-            if (select.value === 'General') {
-                badge.style.display = 'none';
-            } else {
-                badge.style.display = 'block';
-                badgeText.textContent = select.value;
-            }
-        }
+        // Side-drawer scope selection removed; default scope is 'General'.
 
         let isSending = false;
 
@@ -909,7 +891,7 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                 return;
             }
             
-            const pageFilter = document.getElementById('pageFilterSelect').value;
+            const pageFilter = 'General';
             const container = document.getElementById('chatContainer');
             
             // Append user message
