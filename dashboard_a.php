@@ -1081,10 +1081,9 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                         <th>Status</th>
                         <th>Submitted By</th>
                         <th>Document</th>
-                        <th>Action</th>
                     </tr>
                     <?php if (mysqli_num_rows($kb_documents) == 0): ?>
-                        <tr><td colspan="7" style="text-align:center;">No documents uploaded yet.</td></tr>
+                        <tr><td colspan="6" style="text-align:center;">No documents uploaded yet.</td></tr>
                     <?php else: ?>
                         <?php while ($doc = mysqli_fetch_assoc($kb_documents)): ?>
                             <tr>
@@ -1104,9 +1103,6 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                                 <td><?php echo htmlspecialchars($doc['uploaded_by']); ?></td>
                                 <td>
                                     <a href="view_document.php?kb_id=<?php echo $doc['id']; ?>" target="_blank" style="color: #5f2397; font-weight: bold; text-decoration: none;">Open PDF</a>
-                                </td>
-                                <td>
-                                    <button class="btn-approve" onclick='openEditModal(<?php echo json_encode($doc); ?>)'>Edit</button>
                                 </td>
                             </tr>
                         <?php endwhile; ?>
@@ -1329,7 +1325,7 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                                 <span style="color:#e74c3c; font-size:13px;">👎 <?php echo intval($h['downvotes'] ?? 0); ?></span>
                             </td>
                             <td style="font-weight:bold;"><?php echo htmlspecialchars($h['query']); ?></td>
-                            <td style="font-size:13px;"><?php echo nl2br(htmlspecialchars($h['response'])); ?></td>
+                            <td style="font-size:13px;"><?php echo nl2br(strip_tags($h['response'], '<a>')); ?></td>
                         </tr>
                     <?php endwhile; endif; ?>
                 </table>

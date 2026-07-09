@@ -222,12 +222,11 @@ else if (isset($_COOKIE['remember_user'])) {
                 <label>Password</label>
                 <input type="password" id="password" name="password" placeholder="Enter your password" required>
 
-                <!-- Keep Logged In Option and Reset Password Link -->
+                <!-- Keep Logged In Option -->
                 <div class="options">
                     <label>
                         <input type="checkbox" name="remember_me" value="1"> Remember Me
                     </label>
-                    <a href="#">Forgot Password?</a>
                 </div>
 
                 <!-- Submission Button -->

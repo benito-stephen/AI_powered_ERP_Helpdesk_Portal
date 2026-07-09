@@ -11,6 +11,7 @@ import logging
 import sys
 from pathlib import Path
 from contextlib import asynccontextmanager
+from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,11 +21,27 @@ sys.path.insert(0, str(Path(__file__).parent))
 from routers import upload, process, chat, status, override
 from settings import get_settings
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(name)s – %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
+# ── Logging setup ─────────────────────────────────────────────────────────────
+LOG_DIR  = Path(__file__).parent / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_FILE = LOG_DIR / "rag_service.log"
+
+LOG_FMT  = "%(asctime)s  %(levelname)-8s  %(name)s – %(message)s"
+LOG_DATE = "%Y-%m-%d %H:%M:%S"
+
+_formatter = logging.Formatter(LOG_FMT, datefmt=LOG_DATE)
+
+# Console handler
+_console = logging.StreamHandler(sys.stdout)
+_console.setFormatter(_formatter)
+
+# Rotating file handler – max 5 MB per file, keep 5 backups
+_file_handler = RotatingFileHandler(
+    LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"
 )
+_file_handler.setFormatter(_formatter)
+
+logging.basicConfig(level=logging.INFO, handlers=[_console, _file_handler])
 logger = logging.getLogger("rag_service")
 
 

@@ -42,7 +42,47 @@ if (!isset($_SESSION['userid']) || $_SESSION['role'] !== 'Technical_admin') {
 }
 
 $userid = $_SESSION['userid'];
-$today = date('Y-m-d');
+$today  = date('Y-m-d');
+
+// ── .env helper: read a value from the FastAPI .env file ────────────────────
+function get_settings_value(string $key, string $default = ''): string {
+    $env_file = __DIR__ . '/fastapi_rag/.env';
+    if (!file_exists($env_file)) return $default;
+    foreach (file($env_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+        if (strpos(trim($line), '#') === 0) continue;
+        if (strpos($line, '=') === false) continue;
+        [$k, $v] = explode('=', $line, 2);
+        if (trim($k) === $key) return trim($v);
+    }
+    return $default;
+}
+
+// ── .env helper: write/update a value in the FastAPI .env file ──────────────
+function save_env_value(string $key, string $value): bool {
+    $env_file = __DIR__ . '/fastapi_rag/.env';
+    $lines    = file_exists($env_file) ? file($env_file, FILE_IGNORE_NEW_LINES) : [];
+    $found    = false;
+    foreach ($lines as &$line) {
+        if (strpos(trim($line), '#') === 0 || strpos($line, '=') === false) continue;
+        [$k] = explode('=', $line, 2);
+        if (trim($k) === $key) { $line = "$key=$value"; $found = true; break; }
+    }
+    unset($line);
+    if (!$found) $lines[] = "$key=$value";
+    return file_put_contents($env_file, implode("\n", $lines) . "\n") !== false;
+}
+
+// Handle RAG settings save POST
+if (isset($_POST['save_rag_settings'])) {
+    $allowed = ['SIMILARITY_THRESHOLD', 'TOP_K_CHUNKS', 'CHUNK_SIZE', 'GEMINI_API_KEY'];
+    foreach ($allowed as $k) {
+        if (isset($_POST[$k])) {
+            save_env_value($k, trim($_POST[$k]));
+        }
+    }
+    $message = "RAG settings and API key saved. Restart the FastAPI service for changes to take effect.";
+}
+
 
 // 1. Calculate punch status for the active work day
 $status_query = mysqli_query($conn, "SELECT * FROM attendance WHERE userid = '$userid' AND date = '$today' ORDER BY id DESC LIMIT 1");
@@ -753,6 +793,7 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
             <li id="tab-knowledge" onclick="display('knowledge')">Knowledge Base Tuning</li>
             <li id="tab-aireview" onclick="display('aireview')">Manage AI Reviews</li>
             <li id="tab-chathistory" onclick="display('chathistory')">&#128366; Chat History</li>
+            <li id="tab-syslogs" onclick="display('syslogs'); loadSystemLogs()">&#128196; System Logs</li>
         </ul>
     </div>
 
@@ -806,7 +847,7 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
             </div>
 
             
-            <div id="myattendance" class="section">
+            <div id="attendance" class="section">
                 <h3>Attendance</h3>
                 <div style="margin-bottom: 20px; background: #fdfcff; padding: 20px; border: 1px solid #e9ecef; border-radius: 8px;">
                     <h4>Punch Operations</h4>
@@ -1310,11 +1351,113 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                         <tr>
                             <td style="font-size:12px; color:#666;"><?php echo date('d M y, H:i', strtotime($h['timestamp'])); ?></td>
                             <td style="font-weight:bold;"><?php echo htmlspecialchars($h['query']); ?></td>
-                            <td style="font-size:13px;"><?php echo nl2br(htmlspecialchars($h['response'])); ?></td>
+                            <td style="font-size:13px;"><?php echo nl2br(strip_tags($h['response'], '<a>')); ?></td>
                         </tr>
                     <?php endwhile; endif; ?>
                 </table>
             </div>
+
+            <!-- ═══════════════════ SYSTEM LOGS SECTION ═══════════════════ -->
+            <div id="syslogs" class="section">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+                    <h3 style="margin:0;">&#128196; System Logs — RAG Service</h3>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                        <a href="system_logs.php?download=1" style="text-decoration:none;">
+                            <button class="btn-primary" style="font-size:12px; padding:6px 12px;">&#11015; Download Log</button>
+                        </a>
+                        <button class="btn-primary" style="font-size:12px; padding:6px 12px; background:#27ae60;" onclick="loadSystemLogs()">&#8635; Refresh</button>
+                        <button onclick="display('overview')" class="btn-primary" style="background:#555; font-size:12px; padding:6px 12px;">&larr; Back</button>
+                    </div>
+                </div>
+
+                <!-- Filters & Config Row -->
+                <div style="background:#f8f9fb; border:1px solid #e0e0e0; border-radius:8px; padding:14px; margin-bottom:16px; display:flex; gap:16px; flex-wrap:wrap; align-items:flex-end;">
+                    <div>
+                        <label style="font-size:12px; font-weight:600; color:#555; display:block; margin-bottom:4px;">Level Filter</label>
+                        <select id="logLevelFilter" style="padding:6px 10px; border:1px solid #ccc; border-radius:5px; font-size:13px;">
+                            <option value="">All Levels</option>
+                            <option value="INFO">INFO</option>
+                            <option value="WARNING">WARNING</option>
+                            <option value="ERROR">ERROR</option>
+                            <option value="CRITICAL">CRITICAL</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="font-size:12px; font-weight:600; color:#555; display:block; margin-bottom:4px;">Lines to Show</label>
+                        <select id="logLinesFilter" style="padding:6px 10px; border:1px solid #ccc; border-radius:5px; font-size:13px;">
+                            <option value="100">Last 100</option>
+                            <option value="300" selected>Last 300</option>
+                            <option value="500">Last 500</option>
+                            <option value="1000">Last 1000</option>
+                            <option value="2000">Last 2000</option>
+                        </select>
+                    </div>
+                    <div style="flex:1; min-width:200px;">
+                        <label style="font-size:12px; font-weight:600; color:#555; display:block; margin-bottom:4px;">Search Logs</label>
+                        <input type="text" id="logSearchFilter" placeholder="e.g. error, ChromaDB, override…" style="width:100%; padding:6px 10px; border:1px solid #ccc; border-radius:5px; font-size:13px; box-sizing:border-box;">
+                    </div>
+                    <div>
+                        <button class="btn-primary" style="font-size:12px; padding:6px 14px;" onclick="loadSystemLogs()">Apply</button>
+                    </div>
+                </div>
+
+                <!-- Configurable Settings Panel -->
+                <div style="background:#fff8e6; border:1px solid #f0c040; border-radius:8px; padding:14px; margin-bottom:16px;">
+                    <h4 style="margin:0 0 10px 0; color:#b7860a; font-size:14px;">&#9881; Adjustable RAG Parameters &amp; Credentials</h4>
+                    <p style="font-size:12px; color:#888; margin:0 0 10px 0;">These values are reflected in the FastAPI <code>.env</code> file. Changes take effect after restarting the service.</p>
+                    <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:flex-end;">
+                        <div>
+                            <label style="font-size:12px; font-weight:600;">Similarity Threshold (current: <code><?php echo get_settings_value('SIMILARITY_THRESHOLD','0.35'); ?></code>)</label>
+                            <p style="font-size:11px; color:#888; margin:2px 0 4px 0;">Min score for a chunk to be considered a match. Higher = stricter.</p>
+                            <input type="number" id="cfg_threshold" step="0.01" min="0.1" max="0.99" value="<?php echo get_settings_value('SIMILARITY_THRESHOLD','0.35'); ?>" style="width:100px; padding:5px 8px; border:1px solid #ccc; border-radius:5px; font-size:13px;">
+                        </div>
+                        <div>
+                            <label style="font-size:12px; font-weight:600;">Top-K Chunks (current: <code><?php echo get_settings_value('TOP_K_CHUNKS','5'); ?></code>)</label>
+                            <p style="font-size:11px; color:#888; margin:2px 0 4px 0;">Number of context chunks passed to Gemini per query.</p>
+                            <input type="number" id="cfg_topk" step="1" min="1" max="20" value="<?php echo get_settings_value('TOP_K_CHUNKS','5'); ?>" style="width:80px; padding:5px 8px; border:1px solid #ccc; border-radius:5px; font-size:13px;">
+                        </div>
+                        <div>
+                            <label style="font-size:12px; font-weight:600;">Chunk Size (current: <code><?php echo get_settings_value('CHUNK_SIZE','800'); ?></code>)</label>
+                            <p style="font-size:11px; color:#888; margin:2px 0 4px 0;">Tokens per text chunk during document processing.</p>
+                            <input type="number" id="cfg_chunk" step="50" min="200" max="2000" value="<?php echo get_settings_value('CHUNK_SIZE','800'); ?>" style="width:100px; padding:5px 8px; border:1px solid #ccc; border-radius:5px; font-size:13px;">
+                        </div>
+                        <div style="flex:1; min-width:280px;">
+                            <label style="font-size:12px; font-weight:600;">Gemini API Key (current: <code><?php 
+                                $key = get_settings_value('GEMINI_API_KEY',''); 
+                                echo $key ? substr($key, 0, 6) . '...' . substr($key, -4) : 'Not configured'; 
+                            ?></code>)</label>
+                            <p style="font-size:11px; color:#888; margin:2px 0 4px 0;">Specify a valid Google Gemini API Key for chatbot operations.</p>
+                            <input type="password" id="cfg_gemini_key" placeholder="Enter Gemini API Key" value="<?php echo htmlspecialchars(get_settings_value('GEMINI_API_KEY','')); ?>" style="width:100%; padding:5px 8px; border:1px solid #ccc; border-radius:5px; font-size:13px; box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <button class="btn-primary" style="font-size:12px; padding:6px 14px; background:#e67e22;" onclick="saveRagSettings()">&#128190; Save Settings</button>
+                            <span id="settingsSaveMsg" style="font-size:12px; color:#27ae60; margin-left:10px;"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Log stats bar -->
+                <div id="logStatsBar" style="font-size:12px; color:#666; margin-bottom:10px;">Loading logs…</div>
+
+                <!-- Log Table -->
+                <div style="overflow-x:auto; border:1px solid #e0e0e0; border-radius:8px;">
+                    <table id="logTable" style="width:100%; table-layout:fixed; border-collapse:collapse; font-size:12px; font-family: 'Courier New', monospace;">
+                        <thead>
+                            <tr style="background:#2c3e50; color:white;">
+                                <th style="width:140px; padding:8px 10px; text-align:left;">Timestamp</th>
+                                <th style="width:80px; padding:8px 10px; text-align:left;">Level</th>
+                                <th style="width:110px; padding:8px 10px; text-align:left;">Logger</th>
+                                <th style="padding:8px 10px; text-align:left;">Message</th>
+                            </tr>
+                        </thead>
+                        <tbody id="logTableBody">
+                            <tr><td colspan="4" style="text-align:center; padding:20px; color:#888;">Click "System Logs" in the sidebar to load logs.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <!-- ═════════════════ END SYSTEM LOGS SECTION ════════════════ -->
+
 
             <script>
                 function display(sectionId) {
@@ -1354,7 +1497,96 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                     document.getElementById('editModal').style.display = 'none';
                 }
 
+                // ── System Logs ────────────────────────────────────────────
+                const LOG_LEVEL_COLORS = {
+                    INFO     : { bg: '#eaf4ff', color: '#1a5276', badge: '#2980b9' },
+                    WARNING  : { bg: '#fffbea', color: '#7d6608', badge: '#f0b427' },
+                    ERROR    : { bg: '#fff0f0', color: '#922b21', badge: '#e74c3c' },
+                    CRITICAL : { bg: '#fce4ec', color: '#880e4f', badge: '#c0392b' },
+                    DEBUG    : { bg: '#f5f5f5', color: '#555',    badge: '#888'    },
+                };
+
+                function loadSystemLogs() {
+                    const level  = document.getElementById('logLevelFilter').value;
+                    const lines  = document.getElementById('logLinesFilter').value;
+                    const search = document.getElementById('logSearchFilter').value;
+                    const tbody  = document.getElementById('logTableBody');
+                    const stats  = document.getElementById('logStatsBar');
+
+                    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#888;">⏳ Loading logs…</td></tr>';
+                    stats.textContent = 'Fetching…';
+
+                    const params = new URLSearchParams({ lines, level, search });
+                    fetch('system_logs.php?' + params)
+                        .then(r => r.json())
+                        .then(data => {
+                            if (data.error) {
+                                tbody.innerHTML = `<tr><td colspan="4" style="color:red;padding:15px;">${data.error}</td></tr>`;
+                                return;
+                            }
+                            const entries = data.lines || [];
+                            if (!entries.length) {
+                                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#888;">No log entries match the current filters.</td></tr>';
+                                stats.textContent = 'No results.';
+                                return;
+                            }
+                            let counts = { INFO:0, WARNING:0, ERROR:0, CRITICAL:0 };
+                            let html = '';
+                            for (const e of entries) {
+                                const c = LOG_LEVEL_COLORS[e.level] || LOG_LEVEL_COLORS.DEBUG;
+                                counts[e.level] = (counts[e.level] || 0) + 1;
+                                html += `<tr style="background:${c.bg}; border-bottom:1px solid #eee;">
+                                    <td style="padding:5px 10px; color:#555; white-space:nowrap; vertical-align:top;">${e.timestamp}</td>
+                                    <td style="padding:5px 10px; vertical-align:top;">
+                                        <span style="background:${c.badge}; color:white; padding:1px 6px; border-radius:4px; font-size:10px; font-weight:bold;">${e.level}</span>
+                                    </td>
+                                    <td style="padding:5px 10px; color:#666; vertical-align:top; word-break:break-word;">${e.logger}</td>
+                                    <td style="padding:5px 10px; color:${c.color}; vertical-align:top; word-break:break-word;">${e.message.replace(/</g,'&lt;')}</td>
+                                </tr>`;
+                            }
+                            tbody.innerHTML = html;
+                            stats.innerHTML = `<b>${entries.length}</b> entries shown &nbsp;|&nbsp;
+                                <span style="color:#2980b9;">INFO: ${counts.INFO||0}</span> &nbsp;
+                                <span style="color:#f0b427;">WARN: ${counts.WARNING||0}</span> &nbsp;
+                                <span style="color:#e74c3c;">ERROR: ${counts.ERROR||0}</span> &nbsp;
+                                <span style="color:#888;">File: ${data.log_file} (${data.file_size_kb} KB)</span>`;
+                        })
+                        .catch(err => {
+                            tbody.innerHTML = `<tr><td colspan="4" style="color:red;padding:15px;">Failed to fetch logs: ${err}</td></tr>`;
+                        });
+                }
+
+                // ── Save RAG Settings via hidden form POST ─────────────────
+                function saveRagSettings() {
+                    const threshold = document.getElementById('cfg_threshold').value;
+                    const topk      = document.getElementById('cfg_topk').value;
+                    const chunk     = document.getElementById('cfg_chunk').value;
+                    const geminiKey = document.getElementById('cfg_gemini_key').value;
+                    const msg       = document.getElementById('settingsSaveMsg');
+
+                    if (!confirm(`Save the following RAG settings & API Key?\n\n• Similarity Threshold: ${threshold}\n• Top-K Chunks: ${topk}\n• Chunk Size: ${chunk}\n• API Key: [Configuring]\n\nThe FastAPI service must be restarted for changes to take effect.`)) return;
+
+                    const form = document.createElement('form');
+                    form.method = 'POST';
+                    form.style.display = 'none';
+                    const fields = { 
+                        save_rag_settings: '1', 
+                        SIMILARITY_THRESHOLD: threshold, 
+                        TOP_K_CHUNKS: topk, 
+                        CHUNK_SIZE: chunk,
+                        GEMINI_API_KEY: geminiKey
+                    };
+                    for (const [k, v] of Object.entries(fields)) {
+                        const inp = document.createElement('input');
+                        inp.type = 'hidden'; inp.name = k; inp.value = v;
+                        form.appendChild(inp);
+                    }
+                    document.body.appendChild(form);
+                    form.submit();
+                }
+
                 function pushToOverride(logId, query, overrideResponse) {
+
                     if (!confirm('Push this approved response as an HR Override? It will be used as a high-priority answer for similar future questions.')) return;
                     
                     const btn = event.target;

@@ -789,7 +789,7 @@ if (($day_of_week >= 6) && ($completed_hours < $required_hours)) {
                         <tr>
                             <td style="font-size:12px; color:#666;"><?php echo date('d M y, H:i', strtotime($h['timestamp'])); ?></td>
                             <td style="font-weight:bold;"><?php echo htmlspecialchars($h['query']); ?></td>
-                            <td style="font-size:13px;"><?php echo nl2br(htmlspecialchars($h['response'])); ?></td>
+                            <td style="font-size:13px;"><?php echo nl2br(strip_tags($h['response'], '<a>')); ?></td>
                         </tr>
                     <?php endwhile; endif; ?>
                 </table>
